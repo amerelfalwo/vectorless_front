@@ -1,14 +1,12 @@
 import { lazy, Suspense } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { API_BASE_URL } from '../config.js'
 
 const CodeBlock = lazy(() =>
   import('./CodeBlock.jsx').then((m) => ({ default: m.CodeBlock })),
 )
 
-/**
- * @param {{ role: 'user' | 'assistant', content: string }} props
- */
 export function MessageBubble({ role, content }) {
   const isUser = role === 'user'
 
@@ -53,6 +51,10 @@ export function MessageBubble({ role, content }) {
                 a: ({ ...props }) => (
                   <a target="_blank" rel="noopener noreferrer" {...props} />
                 ),
+                img: ({ src, alt, ...props }) => {
+                  const imgSrc = src?.startsWith('/static/') ? `${API_BASE_URL}${src}` : src
+                  return <img src={imgSrc} alt={alt} className="rounded-lg shadow-md max-w-[80%] my-4 h-auto" {...props} />
+                },
                 table: ({ children }) => (
                   <div className="my-3 overflow-x-auto rounded-lg border border-zinc-700/90 bg-zinc-950/40 ring-1 ring-zinc-800/80">
                     <table className="w-full min-w-[280px] border-collapse text-left text-xs">
