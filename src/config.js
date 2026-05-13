@@ -3,5 +3,4 @@
  * Override with `VITE_API_BASE_URL` in `.env` (no trailing slash).
  */
 export const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '') ||
-  'https://amer003100-vectorless-rag.hf.space'
+  import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '') || ''
