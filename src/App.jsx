@@ -6,6 +6,8 @@ import {
   fetchChatHistory,
   streamAsk,
   uploadDocument,
+  fetchDocumentStatus,
+  retryDocumentIndexing,
   attachDocumentToChat,
   detachDocumentFromChat,
   listChats,
@@ -27,6 +29,7 @@ import {
   AGENT_STATUS_TEXT,
   STEP,
   activateStep,
+  updateStep,
   completeStep,
   createSteps,
   failActive,
@@ -202,6 +205,23 @@ export default function App() {
       try {
         const data = await fetchChatHistory(session.chatId)
         setMessages(mapHistoryToMessages(data.history))
+
+        if (session.docId) {
+          fetchDocumentStatus(session.docId)
+            .then((docMeta) => {
+              if (docMeta.status === 'indexing') {
+                setAgentStatus('indexing')
+                pollDocumentUntilReady(session.docId)
+                  .then(() => setAgentStatus('ready'))
+                  .catch(() => setAgentStatus('error'))
+              } else if (docMeta.status === 'ready') {
+                setAgentStatus('ready')
+              } else if (docMeta.status === 'failed') {
+                setAgentStatus('error')
+              }
+            })
+            .catch(() => {})
+        }
       } catch (e) {
         console.error(e)
         setMessages([])
@@ -215,6 +235,46 @@ export default function App() {
     // The AbortError path in processTurn marks the message "stopped" and keeps partial text.
     streamAbortRef.current?.abort()
   }, [])
+
+  /**
+   * Polls GET /documents/{docId}/status until status is 'ready' or 'failed'.
+   * Updates operational progress during polling.
+   */
+  const pollDocumentUntilReady = useCallback(
+    async (docId, { signal, onProgress, intervalMs = 1500 } = {}) => {
+      while (!signal?.aborted) {
+        await new Promise((resolve) => setTimeout(resolve, intervalMs))
+        if (signal?.aborted) break
+
+        try {
+          const data = await fetchDocumentStatus(docId, { signal })
+          onProgress?.(data)
+
+          if (data.status === 'ready') {
+            return data
+          }
+          if (data.status === 'failed') {
+            throw new Error(data.error || 'Document indexing failed')
+          }
+        } catch (err) {
+          if (signal?.aborted) throw err
+          if (err.response?.status === 404) {
+            continue
+          }
+          if (err.message && !err.isAxiosError) {
+            throw err
+          }
+          console.warn('Transient status polling error:', err)
+        }
+      }
+      if (signal?.aborted) {
+        const abortErr = new Error('Polling aborted')
+        abortErr.name = 'AbortError'
+        throw abortErr
+      }
+    },
+    [],
+  )
 
   /**
    * One assistant turn: optional upload+index, then the streamed /ask.
@@ -244,32 +304,93 @@ export default function App() {
           setAgentStatus('uploading')
           steps((s) => activateStep(s, STEP.UPLOAD, file.name))
 
+          // 1. Immediate upload request (returns HTTP 202 Accepted in ~100-300ms)
           const res = await uploadDocument(file, cid, {
             signal,
             onSent: () => {
-              setAgentStatus('indexing')
-              steps((s) => activateStep(completeStep(s, STEP.UPLOAD), STEP.INDEX))
-              patchUser((m) => ({ ...m, file: { ...m.file, status: 'indexing' } }))
+              steps((s) => completeStep(s, STEP.UPLOAD))
             },
           })
 
-          applyDoc(res.doc_id, file.name)
-          await attachDocumentToChat(cid, res.doc_id)
+          const docId = res.document_id || res.doc_id
+          applyDoc(docId, file.name)
+          attachDocumentToChat(cid, docId).catch(() => {})
           setSessions(
-            patchSession(cid, { docId: res.doc_id, docName: file.name, updatedAt: Date.now() }),
+            patchSession(cid, { docId, docName: file.name, updatedAt: Date.now() }),
           )
-          steps((s) => completeStep(completeStep(s, STEP.UPLOAD), STEP.INDEX))
-          patchUser((m) => ({ ...m, file: { ...m.file, status: 'ready' } }))
-          patchAssistant((m) => ({
-            ...m,
-            details: { filename: file.name, sections: res.page_count || undefined },
-          }))
+          steps((s) => completeStep(s, STEP.UPLOAD))
+
+          if (res.status === 'ready') {
+            // Deduplication instant cache hit!
+            steps((s) => completeStep(s, STEP.INDEX))
+            patchUser((m) => ({ ...m, file: { ...m.file, status: 'ready' } }))
+            patchAssistant((m) => ({
+              ...m,
+              details: { filename: file.name, sections: res.page_count || undefined },
+            }))
+          } else {
+            // Asynchronous background indexing: poll status every 1-2s
+            setAgentStatus('indexing')
+            steps((s) => activateStep(s, STEP.INDEX, 'Processing PDF'))
+            patchUser((m) => ({ ...m, file: { ...m.file, status: 'indexing' } }))
+
+            const statusData = await pollDocumentUntilReady(docId, {
+              signal,
+              onProgress: (statusInfo) => {
+                const stageMsg = statusInfo.current_stage || 'Processing PDF'
+                steps((s) => updateStep(s, STEP.INDEX, stageMsg))
+              },
+            })
+
+            steps((s) => completeStep(s, STEP.INDEX))
+            patchUser((m) => ({ ...m, file: { ...m.file, status: 'ready' } }))
+            patchAssistant((m) => ({
+              ...m,
+              details: {
+                filename: file.name,
+                sections: statusData.section_count || statusData.page_count || undefined,
+              },
+            }))
+          }
+
+          setAgentStatus('ready')
           entry.file = null // uploaded: a retry must not upload again
           phase = 'ask'
         }
 
         // ---- B. Ask (PageIndex search happens server-side before the first token) ----
         const activeDocId = docRef.current.id
+        if (activeDocId) {
+          try {
+            const st = await fetchDocumentStatus(activeDocId, { signal })
+            if (st.status === 'indexing') {
+              setAgentStatus('indexing')
+              steps((s) => activateStep(s, STEP.INDEX, st.current_stage || 'Processing PDF'))
+              const statusData = await pollDocumentUntilReady(activeDocId, {
+                signal,
+                onProgress: (info) => {
+                  steps((s) => updateStep(s, STEP.INDEX, info.current_stage || 'Processing PDF'))
+                },
+              })
+              steps((s) => completeStep(s, STEP.INDEX))
+            } else if (st.status === 'failed') {
+              setAgentStatus('indexing')
+              steps((s) => activateStep(s, STEP.INDEX, 'Processing PDF'))
+              await retryDocumentIndexing(activeDocId, { signal })
+              const statusData = await pollDocumentUntilReady(activeDocId, {
+                signal,
+                onProgress: (info) => {
+                  steps((s) => updateStep(s, STEP.INDEX, info.current_stage || 'Processing PDF'))
+                },
+              })
+              steps((s) => completeStep(s, STEP.INDEX))
+            }
+          } catch (err) {
+            if (isAbort(err)) throw err
+            console.warn('Status pre-check warning:', err)
+          }
+        }
+
         setAgentStatus('retrieving')
         steps((s) => activateStep(s, STEP.RETRIEVE, 'Searching document'))
         patchAssistant((m) => ({ ...m, status: 'pending' }))

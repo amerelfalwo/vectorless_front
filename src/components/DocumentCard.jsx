@@ -5,7 +5,7 @@ import { formatBytes } from '../lib/activity.js'
 const STATUS = {
   staged: { text: 'Attached · sent with your next message', tone: 'text-zinc-400' },
   uploading: { text: 'Uploading document…', tone: 'text-sky-300', busy: true },
-  indexing: { text: 'Preparing document…', tone: 'text-sky-300', busy: true },
+  indexing: { text: 'Indexing document…', tone: 'text-sky-300', busy: true },
   ready: { text: 'Document ready', tone: 'text-emerald-400' },
   error: { text: 'Upload failed', tone: 'text-red-400' },
 }

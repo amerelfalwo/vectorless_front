@@ -15,9 +15,8 @@ export const api = axios.create({
 /**
  * @param {File} file
  * @param {string} [chatId]
- * @param {{ onSent?: () => void }} [opts] onSent fires once the file bytes have been fully sent
- *   (the server is then indexing; the response arrives when indexing is finished).
- * @returns {Promise<{ doc_id: string, message?: string, filename?: string, status?: string, page_count?: number }>}
+ * @param {{ onSent?: () => void, signal?: AbortSignal }} [opts] onSent fires once the file bytes have been fully sent
+ * @returns {Promise<{ doc_id: string, document_id?: string, message?: string, filename?: string, status?: string, page_count?: number }>}
  */
 export async function uploadDocument(file, chatId, opts = {}) {
   const formData = new FormData()
@@ -29,12 +28,49 @@ export async function uploadDocument(file, chatId, opts = {}) {
   const { data } = await api.post('/upload', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
     signal: opts.signal,
+    validateStatus: (status) => status >= 200 && status < 300,
     onUploadProgress: (e) => {
       if (!sentFired && e.total && e.loaded >= e.total) {
         sentFired = true
         opts.onSent?.()
       }
     },
+  })
+  return data
+}
+
+/**
+ * @param {string} documentId
+ * @param {{ signal?: AbortSignal }} [opts]
+ * @returns {Promise<{
+ *   document_id: string,
+ *   doc_id: string,
+ *   filename: string,
+ *   status: 'uploaded' | 'indexing' | 'ready' | 'failed',
+ *   progress: number,
+ *   current_stage: string,
+ *   page_count: number,
+ *   section_count: number,
+ *   indexing_method?: string,
+ *   duration?: number,
+ *   error?: string
+ * }>}
+ */
+export async function fetchDocumentStatus(documentId, opts = {}) {
+  const { data } = await api.get(`/documents/${encodeURIComponent(documentId)}/status`, {
+    signal: opts.signal,
+  })
+  return data
+}
+
+/**
+ * @param {string} documentId
+ * @param {{ signal?: AbortSignal }} [opts]
+ * @returns {Promise<{ doc_id: string, document_id: string, status: string }>}
+ */
+export async function retryDocumentIndexing(documentId, opts = {}) {
+  const { data } = await api.post(`/documents/${encodeURIComponent(documentId)}/retry`, {}, {
+    signal: opts.signal,
   })
   return data
 }

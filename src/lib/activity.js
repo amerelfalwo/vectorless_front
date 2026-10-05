@@ -102,6 +102,14 @@ export function activateStep(steps, id, message) {
   )
 }
 
+/** @returns {ActivityStep[]} */
+export function updateStep(steps, id, message) {
+  return patch(steps, id, (s) => ({
+    ...s,
+    message: message ?? s.message,
+  }))
+}
+
 /**
  * @param {ActivityStep[]} steps
  * @param {string} id
