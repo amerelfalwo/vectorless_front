@@ -8,6 +8,9 @@ import {
   uploadDocument,
   attachDocumentToChat,
   detachDocumentFromChat,
+  listChats,
+  deleteChat,
+  renameChat,
 } from './api/client.js'
 import { ChatLayout } from './components/ChatLayout.jsx'
 import { ChatInput } from './components/ChatInput.jsx'
@@ -82,6 +85,7 @@ export default function App() {
   const [chatId, setChatId] = useState(null)
   const [messages, setMessages] = useState([])
   const [sessions, setSessions] = useState(() => loadSessions())
+  const [sessionsLoaded, setSessionsLoaded] = useState(false)
   const [input, setInput] = useState('')
   const [attachedFile, setAttachedFile] = useState(null)
   /** @type {[AgentStatus, (s: AgentStatus) => void]} */
@@ -126,6 +130,25 @@ export default function App() {
     },
     [],
   )
+
+  // Load persisted chat sessions from backend on startup
+  useEffect(() => {
+    listChats()
+      .then(({ chats }) => {
+        if (!chats || chats.length === 0) return
+        const mapped = chats.map((c) => ({
+          chatId: c.chat_id,
+          docId: c.doc_id || null,
+          docName: c.doc_name || null,
+          title: c.title || 'New chat',
+          updatedAt: Math.round((c.updated_at || Date.now() / 1000) * 1000),
+        }))
+        setSessions(mapped)
+        mapped.forEach((s) => upsertSession(s)) // sync to localStorage too
+      })
+      .catch((e) => console.warn('Could not load sessions from backend:', e))
+      .finally(() => setSessionsLoaded(true))
+  }, [])
 
   // Select file from input (keeps file staged until user presses Send)
   const handleSelectFile = useCallback((file) => {
@@ -488,18 +511,23 @@ export default function App() {
   }, [chatId, applyDoc])
 
   const handleDeleteSession = useCallback(
-    (sessionId) => {
+    async (sessionId) => {
       const remaining = deleteSession(sessionId)
       setSessions(remaining)
       if (chatId === sessionId) {
         handleNewChat()
       }
-      toast.success('Chat deleted successfully.')
+      try {
+        await deleteChat(sessionId)
+      } catch (e) {
+        console.warn('Backend delete failed:', e)
+      }
+      toast.success('Chat deleted.')
     },
     [chatId, handleNewChat],
   )
 
-  const handleRenameSession = useCallback((sessionId, newTitle) => {
+  const handleRenameSession = useCallback(async (sessionId, newTitle) => {
     const trimmed = (newTitle || '').trim()
     if (!trimmed) return
     const updated = patchSession(sessionId, {
@@ -507,7 +535,12 @@ export default function App() {
       updatedAt: Date.now(),
     })
     setSessions(updated)
-    toast.success('Chat renamed successfully.')
+    try {
+      await renameChat(sessionId, trimmed)
+    } catch (e) {
+      console.warn('Backend rename failed:', e)
+    }
+    toast.success('Chat renamed.')
   }, [])
 
   const sidebar = (

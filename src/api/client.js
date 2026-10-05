@@ -78,6 +78,33 @@ export async function detachDocumentFromChat(chatId) {
 }
 
 /**
+ * @returns {Promise<{ chats: Array<{ chat_id, title, doc_id, doc_name, created_at, updated_at }> }>}
+ */
+export async function listChats() {
+  const { data } = await api.get('/chats')
+  return data
+}
+
+/**
+ * @param {string} chatId
+ * @returns {Promise<{ message: string }>}
+ */
+export async function deleteChat(chatId) {
+  const { data } = await api.delete(`/chat/${encodeURIComponent(chatId)}`)
+  return data
+}
+
+/**
+ * @param {string} chatId
+ * @param {string} title
+ * @returns {Promise<{ message: string, title: string }>}
+ */
+export async function renameChat(chatId, title) {
+  const { data } = await api.patch(`/chat/${encodeURIComponent(chatId)}/title`, { title })
+  return data
+}
+
+/**
  * Stream assistant tokens from POST /ask using fetch + ReadableStream.
  * Supports SSE `data:` lines, stage event markers, and raw incremental text.
  *
