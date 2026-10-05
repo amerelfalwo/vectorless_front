@@ -40,3 +40,10 @@ export function patchSession(chatId, patch) {
   saveSessions(list)
   return list
 }
+
+/** @param {string} chatId */
+export function deleteSession(chatId) {
+  const list = loadSessions().filter((s) => s.chatId !== chatId)
+  saveSessions(list)
+  return list
+}

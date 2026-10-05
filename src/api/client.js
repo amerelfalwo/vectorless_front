@@ -14,13 +14,27 @@ export const api = axios.create({
 
 /**
  * @param {File} file
- * @returns {Promise<{ doc_id: string, message?: string }>}
+ * @param {string} [chatId]
+ * @param {{ onSent?: () => void }} [opts] onSent fires once the file bytes have been fully sent
+ *   (the server is then indexing; the response arrives when indexing is finished).
+ * @returns {Promise<{ doc_id: string, message?: string, filename?: string, status?: string, page_count?: number }>}
  */
-export async function uploadDocument(file) {
+export async function uploadDocument(file, chatId, opts = {}) {
   const formData = new FormData()
   formData.append('file', file)
+  if (chatId) {
+    formData.append('chat_id', chatId)
+  }
+  let sentFired = false
   const { data } = await api.post('/upload', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
+    signal: opts.signal,
+    onUploadProgress: (e) => {
+      if (!sentFired && e.total && e.loaded >= e.total) {
+        sentFired = true
+        opts.onSent?.()
+      }
+    },
   })
   return data
 }
@@ -43,22 +57,55 @@ export async function fetchChatHistory(chatId) {
 }
 
 /**
+ * @param {string} chatId
+ * @param {string} docId
+ * @returns {Promise<{ message: string, chat_id: string, doc_id: string }>}
+ */
+export async function attachDocumentToChat(chatId, docId) {
+  const { data } = await api.post(`/chat/${encodeURIComponent(chatId)}/attach`, {
+    doc_id: docId,
+  })
+  return data
+}
+
+/**
+ * @param {string} chatId
+ * @returns {Promise<{ message: string, chat_id: string }>}
+ */
+export async function detachDocumentFromChat(chatId) {
+  const { data } = await api.delete(`/chat/${encodeURIComponent(chatId)}/document`)
+  return data
+}
+
+/**
  * Stream assistant tokens from POST /ask using fetch + ReadableStream.
- * Supports SSE `data:` lines and plain incremental text (no `data:` prefix).
+ * Supports SSE `data:` lines, stage event markers, and raw incremental text.
  *
- * @param {{ doc_id: string, chat_id: string, query: string, signal?: AbortSignal, onDelta: (chunk: string) => void }} opts
+ * @param {{
+ *   doc_id?: string,
+ *   doc_name?: string,
+ *   chat_id: string,
+ *   query: string,
+ *   deep_analysis?: boolean,
+ *   signal?: AbortSignal,
+ *   onDelta: (chunk: string) => void,
+ *   onStage?: (stage: { stage: string, duration?: number, nodes?: number }) => void
+ * }} opts
  */
 export async function streamAsk({
   doc_id,
+  doc_name,
   chat_id,
   query,
+  deep_analysis,
   signal,
   onDelta,
+  onStage,
 }) {
   const res = await fetch(`${API_BASE_URL}/ask`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-    body: JSON.stringify({ doc_id, chat_id, query }),
+    body: JSON.stringify({ doc_id, doc_name, chat_id, query, deep_analysis }),
     signal,
   })
 
@@ -76,21 +123,46 @@ export async function streamAsk({
   let carry = ''
   let sawDataPrefix = false
 
+  const stageRegex = /<!--STAGE:(.*?)-->\n?/g
+
+  const handleStageAndDelta = (rawChunk) => {
+    let text = rawChunk
+    let match
+    while ((match = stageRegex.exec(text)) !== null) {
+      try {
+        const stageData = JSON.parse(match[1])
+        onStage?.(stageData)
+      } catch (err) {
+        console.warn('Failed to parse stage marker', err)
+      }
+    }
+    stageRegex.lastIndex = 0
+    text = text.replace(stageRegex, '')
+    if (text) {
+      onDelta(text)
+    }
+  }
+
   const flushLine = (line) => {
     const trimmedEnd = line.replace(/\r$/, '')
     if (trimmedEnd.startsWith('data:')) {
       sawDataPrefix = true
       const payload = trimmedEnd.slice(5).trimStart()
       if (payload === '[DONE]' || payload === '') return
-      onDelta(payload)
+      handleStageAndDelta(payload)
       return
     }
     if (sawDataPrefix) return
     if (trimmedEnd === '') return
-    onDelta(trimmedEnd + '\n')
+    handleStageAndDelta(trimmedEnd + '\n')
   }
 
   const pushText = (text) => {
+    // If stream is raw chunks without data: prefixes, forward immediately without buffering until newline
+    if (!sawDataPrefix && !text.includes('data:')) {
+      handleStageAndDelta(text)
+      return
+    }
     carry += text
     const parts = carry.split('\n')
     carry = parts.pop() ?? ''
@@ -106,7 +178,7 @@ export async function streamAsk({
     pushText(decoder.decode())
     if (carry) {
       if (sawDataPrefix && carry.startsWith('data:')) flushLine(carry)
-      else if (!sawDataPrefix) onDelta(carry)
+      else if (!sawDataPrefix) handleStageAndDelta(carry)
       else if (carry.trim()) flushLine(carry)
     }
   } finally {

@@ -7,3 +7,42 @@ body {
 #root {
   min-height: 100dvh;
 }
+
+/* Visible keyboard focus everywhere (mouse clicks don't show the ring). */
+:where(button, a, textarea, input, [tabindex]):focus-visible {
+  outline: 2px solid rgb(125 170 255 / 0.85);
+  outline-offset: 2px;
+}
+textarea:focus-visible {
+  outline: none; /* the composer capsule shows focus via focus-within */
+}
+
+/* Streaming caret */
+@keyframes vl-caret-blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+.vl-caret {
+  animation: vl-caret-blink 1.1s steps(1) infinite;
+}
+
+/* Indeterminate bar: honest "working, duration unknown" (no fake percentage) */
+@keyframes vl-indeterminate {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+.vl-indeterminate {
+  animation: vl-indeterminate 1.4s ease-in-out infinite;
+}
+
+/* Reduced motion: stop all decorative animation, keep state visible. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  .vl-caret { animation: none; opacity: 1; }
+  .vl-indeterminate { animation: none; width: 100%; opacity: 0.5; }
+}
