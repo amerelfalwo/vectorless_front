@@ -9,13 +9,15 @@ createRoot(document.getElementById('root')).render(
     <>
       <App />
       <Toaster
-        richColors
-        theme="dark"
-        position="top-center"
+        theme="light"
+        position="top-right"
         closeButton
         toastOptions={{
           classNames: {
-            toast: 'border border-zinc-700 bg-zinc-900 text-zinc-100 shadow-xl',
+            toast: 'border border-[#E4E5DE] bg-white text-[#262B27] shadow-lg rounded-xl font-sans',
+            description: 'text-[#777D76]',
+            actionButton: 'bg-[#285943] text-white',
+            cancelButton: 'bg-[#F7F6F1] text-[#262B27]',
           },
         }}
       />

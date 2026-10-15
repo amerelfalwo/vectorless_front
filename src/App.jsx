@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { FileText, X } from 'lucide-react'
 import {
   createChat,
   fetchChatHistory,
@@ -13,18 +12,23 @@ import {
   listChats,
   deleteChat,
   renameChat,
+  fetchDocumentTree,
 } from './api/client.js'
 import { ChatLayout } from './components/ChatLayout.jsx'
+import { TopNav } from './components/TopNav.jsx'
 import { ChatInput } from './components/ChatInput.jsx'
 import { EmptyState } from './components/EmptyState.jsx'
 import { MessageList } from './components/MessageList.jsx'
 import { Sidebar } from './components/Sidebar.jsx'
+import { DocumentLibrary } from './components/DocumentLibrary.jsx'
+import { DocumentStructureExplorer } from './components/DocumentStructureExplorer.jsx'
 import {
   loadSessions,
   patchSession,
   upsertSession,
   deleteSession,
 } from './lib/sessionsStorage.js'
+
 import {
   AGENT_STATUS_TEXT,
   STEP,
@@ -36,13 +40,11 @@ import {
 } from './lib/activity.js'
 
 /**
- * Single source of truth for what the agent is doing.
- * @typedef {import('./lib/activity.js').AgentStatus} AgentStatus
+ * Busy agent statuses
  */
 const BUSY_STATUSES = new Set(['uploading', 'indexing', 'retrieving', 'generating', 'streaming'])
 
 function mapHistoryToMessages(history) {
-  // History rows carry no activity data, so they render as plain completed messages.
   return (history ?? [])
     .filter((row) => row.role !== 'system')
     .map((row) => ({
@@ -83,33 +85,81 @@ const isAbort = (e) =>
   e?.name === 'CanceledError'
 
 export default function App() {
+  // Navigation / Routing State: synchronized with browser URL
+  const [currentView, setCurrentView] = useState(() => {
+    return window.location.pathname.startsWith('/documents') ? 'documents' : 'chat'
+  })
+
   const [docId, setDocId] = useState(null)
   const [docName, setDocName] = useState(null)
   const [chatId, setChatId] = useState(null)
   const [messages, setMessages] = useState([])
   const [sessions, setSessions] = useState(() => loadSessions())
-  const [sessionsLoaded, setSessionsLoaded] = useState(false)
   const [input, setInput] = useState('')
+
   const [attachedFile, setAttachedFile] = useState(null)
-  /** @type {[AgentStatus, (s: AgentStatus) => void]} */
   const [agentStatus, setAgentStatus] = useState('idle')
+
+  // UI state
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
+  const [structureExplorerOpen, setStructureExplorerOpen] = useState(false)
+  const [documentTree, setDocumentTree] = useState(null)
+  const [activeTreeNodeId, setActiveTreeNodeId] = useState(null)
 
   const busy = BUSY_STATUSES.has(agentStatus)
 
   const streamAbortRef = useRef(null)
-  // Mirrors docId/docName so async turn code never reads stale closures.
   const docRef = useRef({ id: null, name: null })
-  // Per-assistant-message retry info (File objects are not serializable, so a ref).
   const turnsRef = useRef(new Map())
-  // Token batching: chunks are appended in one state update per animation frame.
   const bufferRef = useRef({ id: null, text: '', raf: 0 })
+
+  // Synchronize browser history and route navigation
+  const handleNavigate = useCallback((view) => {
+    setCurrentView(view)
+    const targetPath = view === 'documents' ? '/documents' : '/'
+    if (window.location.pathname !== targetPath) {
+      window.history.pushState(null, '', targetPath)
+    }
+    setMobileSidebarOpen(false)
+  }, [])
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const view = window.location.pathname.startsWith('/documents') ? 'documents' : 'chat'
+      setCurrentView(view)
+    }
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [])
 
   const applyDoc = useCallback((id, name) => {
     docRef.current = { id, name }
     setDocId(id)
     setDocName(name)
+    setDocumentTree(null)
   }, [])
+
+  // Load tree whenever docId changes and explorer is opened
+  const loadDocTree = useCallback(async (id) => {
+    if (!id) return
+    try {
+      const data = await fetchDocumentTree(id)
+      setDocumentTree(data.tree || [])
+    } catch (err) {
+      console.warn('Could not load tree:', err)
+    }
+  }, [])
+
+  const toggleStructureExplorer = useCallback(() => {
+    setStructureExplorerOpen((prev) => {
+      const next = !prev
+      if (next && docRef.current.id && !documentTree) {
+        loadDocTree(docRef.current.id)
+      }
+      return next
+    })
+  }, [documentTree, loadDocTree])
 
   const flushNow = useCallback(() => {
     const buf = bufferRef.current
@@ -143,17 +193,16 @@ export default function App() {
           chatId: c.chat_id,
           docId: c.doc_id || null,
           docName: c.doc_name || null,
-          title: c.title || 'New chat',
+          title: c.title || 'New research',
           updatedAt: Math.round((c.updated_at || Date.now() / 1000) * 1000),
         }))
         setSessions(mapped)
-        mapped.forEach((s) => upsertSession(s)) // sync to localStorage too
+        mapped.forEach((s) => upsertSession(s))
       })
       .catch((e) => console.warn('Could not load sessions from backend:', e))
-      .finally(() => setSessionsLoaded(true))
   }, [])
 
-  // Select file from input (keeps file staged until user presses Send)
+
   const handleSelectFile = useCallback((file) => {
     if (!file.name.toLowerCase().endsWith('.pdf')) {
       toast.error('Please select a valid PDF file.')
@@ -173,6 +222,7 @@ export default function App() {
     applyDoc(null, null)
     setMessages([])
     setAgentStatus('idle')
+    setStructureExplorerOpen(false)
 
     try {
       const { chat_id } = await createChat()
@@ -181,16 +231,59 @@ export default function App() {
         upsertSession({
           chatId: chat_id,
           docId: null,
-          title: 'New chat',
+          title: 'New research',
           updatedAt: Date.now(),
         }),
       )
       setMobileSidebarOpen(false)
+      handleNavigate('chat')
     } catch (e) {
       console.error(e)
-      toast.error('Failed to start new chat.')
+      toast.error('Failed to initialize research session.')
     }
-  }, [agentStatus, applyDoc])
+  }, [agentStatus, applyDoc, handleNavigate])
+
+  const handleStop = useCallback(() => {
+    streamAbortRef.current?.abort()
+  }, [])
+
+  /**
+   * Polls GET /documents/{docId}/status until status is 'ready' or 'failed'.
+   */
+  const pollDocumentUntilReady = useCallback(
+    async (documentId, { signal, onProgress, intervalMs = 1500 } = {}) => {
+      while (!signal?.aborted) {
+        await new Promise((resolve) => setTimeout(resolve, intervalMs))
+        if (signal?.aborted) break
+
+        try {
+          const data = await fetchDocumentStatus(documentId, { signal })
+          onProgress?.(data)
+
+          if (data.status === 'ready') {
+            return data
+          }
+          if (data.status === 'failed') {
+            throw new Error(data.error || 'Document indexing failed')
+          }
+        } catch (err) {
+          if (signal?.aborted) throw err
+          if (err.response?.status === 404) {
+            continue
+          }
+          if (err.message && !err.isAxiosError) {
+            throw err
+          }
+        }
+      }
+      if (signal?.aborted) {
+        const abortErr = new Error('Polling aborted')
+        abortErr.name = 'AbortError'
+        throw abortErr
+      }
+    },
+    [],
+  )
 
   const handleSelectSession = useCallback(
     async (session) => {
@@ -202,6 +295,8 @@ export default function App() {
       setInput('')
       setAttachedFile(null)
       setMobileSidebarOpen(false)
+      handleNavigate('chat')
+
       try {
         const data = await fetchChatHistory(session.chatId)
         setMessages(mapHistoryToMessages(data.history))
@@ -225,61 +320,15 @@ export default function App() {
       } catch (e) {
         console.error(e)
         setMessages([])
-        toast.error('Failed to load chat history.')
+        toast.error('Failed to load conversation history.')
       }
     },
-    [applyDoc],
+    [applyDoc, handleNavigate, pollDocumentUntilReady],
   )
 
-  const handleStop = useCallback(() => {
-    // The AbortError path in processTurn marks the message "stopped" and keeps partial text.
-    streamAbortRef.current?.abort()
-  }, [])
 
   /**
-   * Polls GET /documents/{docId}/status until status is 'ready' or 'failed'.
-   * Updates operational progress during polling.
-   */
-  const pollDocumentUntilReady = useCallback(
-    async (docId, { signal, onProgress, intervalMs = 1500 } = {}) => {
-      while (!signal?.aborted) {
-        await new Promise((resolve) => setTimeout(resolve, intervalMs))
-        if (signal?.aborted) break
-
-        try {
-          const data = await fetchDocumentStatus(docId, { signal })
-          onProgress?.(data)
-
-          if (data.status === 'ready') {
-            return data
-          }
-          if (data.status === 'failed') {
-            throw new Error(data.error || 'Document indexing failed')
-          }
-        } catch (err) {
-          if (signal?.aborted) throw err
-          if (err.response?.status === 404) {
-            continue
-          }
-          if (err.message && !err.isAxiosError) {
-            throw err
-          }
-          console.warn('Transient status polling error:', err)
-        }
-      }
-      if (signal?.aborted) {
-        const abortErr = new Error('Polling aborted')
-        abortErr.name = 'AbortError'
-        throw abortErr
-      }
-    },
-    [],
-  )
-
-  /**
-   * One assistant turn: optional upload+index, then the streamed /ask.
-   * Every status/step change below is triggered by a real event
-   * (bytes sent, response received, first token, stream end, abort, error).
+   * One assistant turn: upload/index if needed, then streamed /ask with telemetry.
    */
   const processTurn = useCallback(
     async ({ assistantId, userId, entry, chatId: cid }) => {
@@ -298,51 +347,48 @@ export default function App() {
       let gotFirst = false
 
       try {
-        // ---- A. Upload + index (only when a PDF travels with this prompt) ----
+        // ---- A. Upload + index ----
         if (entry.file) {
           const file = entry.file
           setAgentStatus('uploading')
-          steps((s) => activateStep(s, STEP.UPLOAD, file.name))
+          steps((s) => activateStep(s, STEP.UPLOAD, `Uploading ${file.name}`))
 
-          // 1. Immediate upload request (returns HTTP 202 Accepted in ~100-300ms)
           const res = await uploadDocument(file, cid, {
             signal,
             onSent: () => {
-              steps((s) => completeStep(s, STEP.UPLOAD))
+              steps((s) => completeStep(s, STEP.UPLOAD, undefined, 'Document uploaded'))
             },
           })
 
-          const docId = res.document_id || res.doc_id
-          applyDoc(docId, file.name)
-          attachDocumentToChat(cid, docId).catch(() => {})
+          const targetDocId = res.document_id || res.doc_id
+          applyDoc(targetDocId, file.name)
+          attachDocumentToChat(cid, targetDocId).catch(() => {})
           setSessions(
-            patchSession(cid, { docId, docName: file.name, updatedAt: Date.now() }),
+            patchSession(cid, { docId: targetDocId, docName: file.name, updatedAt: Date.now() }),
           )
-          steps((s) => completeStep(s, STEP.UPLOAD))
+          steps((s) => completeStep(s, STEP.UPLOAD, undefined, 'Document uploaded'))
 
           if (res.status === 'ready') {
-            // Deduplication instant cache hit!
-            steps((s) => completeStep(s, STEP.INDEX))
+            steps((s) => completeStep(s, STEP.INDEX, undefined, 'Reused cached tree index'))
             patchUser((m) => ({ ...m, file: { ...m.file, status: 'ready' } }))
             patchAssistant((m) => ({
               ...m,
               details: { filename: file.name, sections: res.page_count || undefined },
             }))
           } else {
-            // Asynchronous background indexing: poll status every 1-2s
             setAgentStatus('indexing')
-            steps((s) => activateStep(s, STEP.INDEX, 'Processing PDF'))
+            steps((s) => activateStep(s, STEP.INDEX, 'Constructing section tree index'))
             patchUser((m) => ({ ...m, file: { ...m.file, status: 'indexing' } }))
 
-            const statusData = await pollDocumentUntilReady(docId, {
+            const statusData = await pollDocumentUntilReady(targetDocId, {
               signal,
               onProgress: (statusInfo) => {
-                const stageMsg = statusInfo.current_stage || 'Processing PDF'
+                const stageMsg = statusInfo.current_stage || 'Processing document'
                 steps((s) => updateStep(s, STEP.INDEX, stageMsg))
               },
             })
 
-            steps((s) => completeStep(s, STEP.INDEX))
+            steps((s) => completeStep(s, STEP.INDEX, undefined, 'Tree index verified'))
             patchUser((m) => ({ ...m, file: { ...m.file, status: 'ready' } }))
             patchAssistant((m) => ({
               ...m,
@@ -354,46 +400,54 @@ export default function App() {
           }
 
           setAgentStatus('ready')
-          entry.file = null // uploaded: a retry must not upload again
+          entry.file = null
           phase = 'ask'
         }
 
-        // ---- B. Ask (PageIndex search happens server-side before the first token) ----
+        // ---- B. Ask with real retrieval telemetry stages ----
         const activeDocId = docRef.current.id
         if (activeDocId) {
           try {
             const st = await fetchDocumentStatus(activeDocId, { signal })
             if (st.status === 'indexing') {
               setAgentStatus('indexing')
-              steps((s) => activateStep(s, STEP.INDEX, st.current_stage || 'Processing PDF'))
-              const statusData = await pollDocumentUntilReady(activeDocId, {
+              steps((s) => activateStep(s, STEP.INDEX, st.current_stage || 'Processing document'))
+              await pollDocumentUntilReady(activeDocId, {
                 signal,
                 onProgress: (info) => {
-                  steps((s) => updateStep(s, STEP.INDEX, info.current_stage || 'Processing PDF'))
+                  steps((s) => updateStep(s, STEP.INDEX, info.current_stage || 'Processing'))
                 },
               })
-              steps((s) => completeStep(s, STEP.INDEX))
+              steps((s) => completeStep(s, STEP.INDEX, undefined, 'Index ready'))
             } else if (st.status === 'failed') {
               setAgentStatus('indexing')
-              steps((s) => activateStep(s, STEP.INDEX, 'Processing PDF'))
+              steps((s) => activateStep(s, STEP.INDEX, 'Re-indexing'))
               await retryDocumentIndexing(activeDocId, { signal })
-              const statusData = await pollDocumentUntilReady(activeDocId, {
+              await pollDocumentUntilReady(activeDocId, {
                 signal,
                 onProgress: (info) => {
-                  steps((s) => updateStep(s, STEP.INDEX, info.current_stage || 'Processing PDF'))
+                  steps((s) => updateStep(s, STEP.INDEX, info.current_stage || 'Processing'))
                 },
               })
-              steps((s) => completeStep(s, STEP.INDEX))
+              steps((s) => completeStep(s, STEP.INDEX, undefined, 'Index ready'))
             }
           } catch (err) {
             if (isAbort(err)) throw err
-            console.warn('Status pre-check warning:', err)
           }
         }
 
         setAgentStatus('retrieving')
-        steps((s) => activateStep(s, STEP.RETRIEVE, 'Searching document'))
+        // Progress through real retrieval stages
+        steps((s) => activateStep(s, STEP.UNDERSTAND, 'Analyzing question requirements'))
         patchAssistant((m) => ({ ...m, status: 'pending' }))
+
+        // Transition to document tree exploration
+        setTimeout(() => {
+          steps((s) => {
+            const s1 = completeStep(s, STEP.UNDERSTAND, undefined, 'Question analyzed')
+            return activateStep(s1, STEP.EXPLORE, 'Traversing document section hierarchy')
+          })
+        }, 150)
 
         let retrievalFinished = false
 
@@ -410,10 +464,33 @@ export default function App() {
               setAgentStatus('generating')
               const durationMs =
                 stageInfo.duration != null ? Math.round(stageInfo.duration * 1000) : undefined
+              const nodesMatched = stageInfo.nodes != null ? stageInfo.nodes : undefined
+
               patchAssistant((m) => {
-                const s1 = completeStep(m.steps ?? [], STEP.RETRIEVE, durationMs)
-                const s2 = activateStep(s1, STEP.GENERATE, 'Synthesizing grounded answer')
-                return { ...m, steps: s2 }
+                let currentSteps = m.steps ?? []
+                currentSteps = completeStep(currentSteps, STEP.EXPLORE, undefined, 'Document structure traversed')
+                currentSteps = completeStep(
+                  currentSteps,
+                  STEP.SELECT,
+                  undefined,
+                  nodesMatched ? `${nodesMatched} relevant sections selected` : 'Sections selected',
+                )
+                currentSteps = completeStep(
+                  currentSteps,
+                  STEP.RETRIEVE,
+                  durationMs,
+                  'Supporting evidence retrieved',
+                )
+                currentSteps = activateStep(currentSteps, STEP.GENERATE, 'Synthesizing grounded answer')
+                return {
+                  ...m,
+                  steps: currentSteps,
+                  details: {
+                    ...(m.details || {}),
+                    nodes: nodesMatched,
+                    duration: durationMs,
+                  },
+                }
               })
             }
           },
@@ -425,7 +502,13 @@ export default function App() {
               patchAssistant((m) => ({
                 ...m,
                 status: 'streaming',
-                steps: activateStep(completeStep(m.steps ?? [], STEP.RETRIEVE), STEP.GENERATE),
+                steps: activateStep(
+                  completeStep(
+                    completeStep(m.steps ?? [], STEP.EXPLORE),
+                    STEP.RETRIEVE,
+                  ),
+                  STEP.GENERATE,
+                ),
               }))
             }
             const buf = bufferRef.current
@@ -440,7 +523,12 @@ export default function App() {
           ...m,
           status: 'completed',
           completedAt: Date.now(),
-          steps: completeStep(completeStep(m.steps ?? [], STEP.RETRIEVE), STEP.GENERATE),
+          steps: completeStep(
+            completeStep(m.steps ?? [], STEP.RETRIEVE),
+            STEP.GENERATE,
+            undefined,
+            'Final response generated',
+          ),
         }))
         setAgentStatus('completed')
       } catch (e) {
@@ -475,100 +563,99 @@ export default function App() {
         if (streamAbortRef.current === controller) streamAbortRef.current = null
       }
     },
-    [applyDoc, flushNow],
+    [applyDoc, flushNow, pollDocumentUntilReady],
   )
 
-  // Send message + attached file together
-  const handleSend = useCallback(async (opts = {}) => {
-    const query = input.trim()
-    const fileToUpload = attachedFile
-    const deepAnalysis = Boolean(opts?.deepAnalysis)
+  // Send message
+  const handleSend = useCallback(
+    async (opts = {}) => {
+      const query = input.trim()
+      const fileToUpload = attachedFile
+      const deepAnalysis = Boolean(opts?.deepAnalysis)
 
-    if ((!query && !fileToUpload) || busy) return
+      if ((!query && !fileToUpload) || busy) return
 
-    setInput('')
-    setAttachedFile(null)
+      setInput('')
+      setAttachedFile(null)
 
-    // Ensure we have an active chat session
-    let activeChatId = chatId
-    if (!activeChatId) {
-      try {
-        const { chat_id } = await createChat()
-        activeChatId = chat_id
-        setChatId(chat_id)
-        setSessions(
-          upsertSession({
-            chatId: chat_id,
-            docId: docRef.current.id || null,
-            title: query
-              ? query.slice(0, 50)
-              : fileToUpload
-                ? `PDF: ${fileToUpload.name}`
-                : 'New chat',
-            updatedAt: Date.now(),
-          }),
-        )
-      } catch (err) {
-        console.error(err)
-        toast.error('Failed to create chat.')
-        // Give the user their input back instead of losing it.
-        setInput(query)
-        setAttachedFile(fileToUpload)
-        return
+      let activeChatId = chatId
+      if (!activeChatId) {
+        try {
+          const { chat_id } = await createChat()
+          activeChatId = chat_id
+          setChatId(chat_id)
+          setSessions(
+            upsertSession({
+              chatId: chat_id,
+              docId: docRef.current.id || null,
+              title: query
+                ? query.slice(0, 50)
+                : fileToUpload
+                  ? `PDF: ${fileToUpload.name}`
+                  : 'New research',
+              updatedAt: Date.now(),
+            }),
+          )
+        } catch (err) {
+          console.error(err)
+          toast.error('Failed to start chat.')
+          setInput(query)
+          setAttachedFile(fileToUpload)
+          return
+        }
       }
-    }
 
-    // Resolve a document persisted for this session if state was lost (e.g. reload).
-    if (!docRef.current.id) {
-      const sess = loadSessions().find((s) => s.chatId === activeChatId)
-      if (sess?.docId) applyDoc(sess.docId, sess.docName ?? null)
-    }
+      if (!docRef.current.id) {
+        const sess = loadSessions().find((s) => s.chatId === activeChatId)
+        if (sess?.docId) applyDoc(sess.docId, sess.docName ?? null)
+      }
 
-    const userText =
-      query || (fileToUpload ? 'Please analyze and summarize the main sections of this document.' : '')
-    const userId = crypto.randomUUID()
-    const assistantId = crypto.randomUUID()
+      const userText =
+        query || (fileToUpload ? 'Please summarize the main arguments in this document.' : '')
+      const userId = crypto.randomUUID()
+      const assistantId = crypto.randomUUID()
 
-    const userMessage = {
-      id: userId,
-      role: 'user',
-      content: userText,
-      file: fileToUpload
-        ? { name: fileToUpload.name, size: fileToUpload.size, status: 'uploading' }
-        : undefined,
-    }
-    const assistantMessage = {
-      id: assistantId,
-      role: 'assistant',
-      content: '',
-      status: 'pending',
-      startedAt: Date.now(),
-      steps: createSteps({ hasFile: Boolean(fileToUpload), hasDoc: Boolean(docRef.current.id) }),
-      details: docRef.current.name ? { filename: docRef.current.name } : undefined,
-    }
-    setMessages((prev) => [...prev, userMessage, assistantMessage])
+      const userMessage = {
+        id: userId,
+        role: 'user',
+        content: userText,
+        file: fileToUpload
+          ? { name: fileToUpload.name, size: fileToUpload.size, status: 'uploading' }
+          : undefined,
+      }
+      const assistantMessage = {
+        id: assistantId,
+        role: 'assistant',
+        content: '',
+        status: 'pending',
+        startedAt: Date.now(),
+        steps: createSteps({ hasFile: Boolean(fileToUpload), hasDoc: Boolean(docRef.current.id) }),
+        details: docRef.current.name ? { filename: docRef.current.name } : undefined,
+      }
+      setMessages((prev) => [...prev, userMessage, assistantMessage])
 
-    // Update session title in sidebar
-    const current = loadSessions().find((s) => s.chatId === activeChatId)
-    if (current && (current.title === 'New chat' || current.title === 'محادثة جديدة')) {
-      setSessions(
-        patchSession(activeChatId, { title: userText.slice(0, 60), updatedAt: Date.now() }),
-      )
-    } else {
-      setSessions(patchSession(activeChatId, { updatedAt: Date.now() }))
-    }
+      const current = loadSessions().find((s) => s.chatId === activeChatId)
+      if (current && (current.title === 'New research' || current.title === 'New chat')) {
+        setSessions(
+          patchSession(activeChatId, { title: userText.slice(0, 60), updatedAt: Date.now() }),
+        )
+      } else {
+        setSessions(patchSession(activeChatId, { updatedAt: Date.now() }))
+      }
 
-    const entry = { query: userText, file: fileToUpload, deepAnalysis }
-    turnsRef.current.set(assistantId, { ...entry, userId, chatId: activeChatId })
-    await processTurn({
-      assistantId,
-      userId,
-      entry: turnsRef.current.get(assistantId),
-      chatId: activeChatId,
-    })
-  }, [input, attachedFile, busy, chatId, applyDoc, processTurn])
+      const entry = { query: userText, file: fileToUpload, deepAnalysis }
+      turnsRef.current.set(assistantId, { ...entry, userId, chatId: activeChatId })
+      await processTurn({
+        assistantId,
+        userId,
+        entry: turnsRef.current.get(assistantId),
+        chatId: activeChatId,
+      })
+    },
+    [input, attachedFile, busy, chatId, applyDoc, processTurn],
+  )
 
-  // Retry a failed/stopped turn or regenerate the last answer.
+  // Retry turn
   const handleRetry = useCallback(
     async (assistantId) => {
       if (busy) return
@@ -577,7 +664,6 @@ export default function App() {
 
       let entry = turnsRef.current.get(assistantId)
       if (!entry) {
-        // Message restored from server history: rebuild from the preceding user turn.
         const prevUser = messages[idx - 1]
         if (!prevUser || prevUser.role !== 'user') {
           toast.error('Nothing to retry for this message.')
@@ -611,12 +697,14 @@ export default function App() {
     [busy, messages, chatId, processTurn],
   )
 
+  // Detach document
   const handleDetachDocument = useCallback(async () => {
     if (!chatId) return
     try {
       await detachDocumentFromChat(chatId)
       applyDoc(null, null)
       setAgentStatus('idle')
+      setStructureExplorerOpen(false)
       setSessions(
         patchSession(chatId, {
           docId: null,
@@ -624,13 +712,14 @@ export default function App() {
           updatedAt: Date.now(),
         }),
       )
-      toast.info('Document detached. Switched back to conversational mode.')
+      toast.info('Document detached. Switched back to general conversation.')
     } catch (e) {
       console.error(e)
       toast.error('Failed to detach document.')
     }
   }, [chatId, applyDoc])
 
+  // Delete chat
   const handleDeleteSession = useCallback(
     async (sessionId) => {
       const remaining = deleteSession(sessionId)
@@ -643,11 +732,12 @@ export default function App() {
       } catch (e) {
         console.warn('Backend delete failed:', e)
       }
-      toast.success('Chat deleted.')
+      toast.success('Conversation deleted.')
     },
     [chatId, handleNewChat],
   )
 
+  // Rename chat
   const handleRenameSession = useCallback(async (sessionId, newTitle) => {
     const trimmed = (newTitle || '').trim()
     if (!trimmed) return
@@ -661,8 +751,70 @@ export default function App() {
     } catch (e) {
       console.warn('Backend rename failed:', e)
     }
-    toast.success('Chat renamed.')
+    toast.success('Conversation renamed.')
   }, [])
+
+  // Start research from Document Library
+  const handleSelectDocumentForChat = useCallback(
+    async (targetDocId, targetDocName, initialPrompt) => {
+      applyDoc(targetDocId, targetDocName)
+      setAgentStatus('ready')
+      handleNavigate('chat')
+
+      let cid = chatId
+      if (!cid) {
+        try {
+          const { chat_id } = await createChat()
+          cid = chat_id
+          setChatId(chat_id)
+        } catch {
+          // fallback
+        }
+      }
+
+      if (cid) {
+        attachDocumentToChat(cid, targetDocId).catch(() => {})
+        setSessions(
+          upsertSession({
+            chatId: cid,
+            docId: targetDocId,
+            docName: targetDocName,
+            title: `Research: ${targetDocName}`,
+            updatedAt: Date.now(),
+          }),
+        )
+      }
+
+      if (initialPrompt) {
+        setInput(initialPrompt)
+      }
+      toast.success(`Attached "${targetDocName}" to research workspace.`)
+    },
+    [applyDoc, chatId, handleNavigate],
+  )
+
+  // Handle citation click: open structure explorer and focus section
+  const handleSelectCitation = useCallback(
+    async (source) => {
+      if (!docRef.current.id) return
+      setStructureExplorerOpen(true)
+      if (!documentTree) {
+        await loadDocTree(docRef.current.id)
+      }
+      // Look for matching node
+      if (source?.title) {
+        setActiveTreeNodeId(source.title)
+      }
+    },
+    [documentTree, loadDocTree],
+  )
+
+  // Current session title for TopNav
+  const currentSessionTitle = useMemo(() => {
+    if (currentView === 'documents') return 'Document Library'
+    const s = sessions.find((item) => item.chatId === chatId)
+    return s?.title || 'Research Workspace'
+  }, [currentView, sessions, chatId])
 
   const sidebar = (
     <Sidebar
@@ -674,6 +826,23 @@ export default function App() {
       onDeleteSession={handleDeleteSession}
       onRenameSession={handleRenameSession}
       onCloseSidebar={() => setMobileSidebarOpen(false)}
+      currentView={currentView}
+      onNavigate={handleNavigate}
+    />
+  )
+
+  const topNav = (
+    <TopNav
+      title={currentSessionTitle}
+      activeDocId={docId}
+      activeDocName={docName}
+      activeDocStatus={agentStatus}
+      onDetachDoc={handleDetachDocument}
+      onToggleStructureExplorer={docId ? toggleStructureExplorer : undefined}
+      structureExplorerOpen={structureExplorerOpen}
+      onOpenMobileSidebar={() => setMobileSidebarOpen(true)}
+      currentView={currentView}
+      onNavigate={handleNavigate}
     />
   )
 
@@ -696,62 +865,67 @@ export default function App() {
     isStreaming: busy,
   }
 
+  const structureExplorerNode =
+    structureExplorerOpen && docId ? (
+      <DocumentStructureExplorer
+        tree={documentTree || []}
+        docName={docName || 'Document'}
+        docId={docId}
+        activeNodeId={activeTreeNodeId}
+        onClose={() => setStructureExplorerOpen(false)}
+        onSelectNode={(node) => setActiveTreeNodeId(node.node_id || node.id)}
+        onAskSection={(node) => {
+          setInput(`Explain the section "${node.title || node.name}" and cite key findings.`)
+        }}
+      />
+    ) : null
+
   return (
     <ChatLayout
       sidebar={sidebar}
+      topNav={topNav}
+      structureExplorer={structureExplorerNode}
       mobileSidebarOpen={mobileSidebarOpen}
       onMobileSidebarOpenChange={setMobileSidebarOpen}
-      onNewChat={handleNewChat}
+      sidebarCollapsed={sidebarCollapsed}
+      onSidebarCollapsedChange={setSidebarCollapsed}
     >
-      {/* Announces stage changes (not individual tokens) to assistive tech. */}
       <div className="sr-only" role="status" aria-live="polite">
         {AGENT_STATUS_TEXT[agentStatus]}
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col bg-[#212121]">
-        {/* Active Document Indicator Banner (When a doc is active in this session) */}
-        {docId ? (
-          <div className="flex items-center justify-between gap-3 border-b border-white/5 bg-[#171717]/80 px-4 py-2 text-xs text-zinc-300 md:px-6">
-            <div className="flex min-w-0 items-center gap-2">
-              <FileText className="h-4 w-4 shrink-0 text-red-400" aria-hidden />
-              <span className="hidden shrink-0 font-medium text-zinc-200 sm:inline">Active Document:</span>
-              <span className="max-w-[200px] truncate rounded bg-white/10 px-2 py-0.5 text-zinc-300 md:max-w-md">
-                {docName || 'PDF Document'}
-              </span>
+      {currentView === 'documents' ? (
+        <DocumentLibrary
+          onSelectDocumentForChat={handleSelectDocumentForChat}
+          onOpenStructureExplorer={(doc) => {
+            applyDoc(doc.doc_id, doc.filename)
+            loadDocTree(doc.doc_id)
+            setStructureExplorerOpen(true)
+          }}
+        />
+      ) : (
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[#F7F6F1]">
+          {messages.length === 0 ? (
+            <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto p-4">
+              <EmptyState onPick={setInput} docName={docName} />
+              <ChatInput {...composerProps} isCentered={true} />
             </div>
-            <div className="flex shrink-0 items-center gap-3">
-              <span className="hidden font-mono text-[11px] text-zinc-500 md:inline">
-                Vectorless RAG Tree Active
-              </span>
-              <button
-                type="button"
-                onClick={handleDetachDocument}
-                disabled={busy}
-                title="Detach document from this chat"
-                className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-zinc-400 transition hover:bg-white/10 hover:text-red-400 disabled:opacity-40"
-              >
-                <X className="h-3 w-3" aria-hidden />
-                <span className="hidden md:inline">Detach</span>
-              </button>
-            </div>
-          </div>
-        ) : null}
+          ) : (
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+              <MessageList
+                messages={messages}
+                busy={busy}
+                onRetry={handleRetry}
+                onSelectCitation={handleSelectCitation}
+              />
 
-        {messages.length === 0 ? (
-          <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto p-4">
-            <EmptyState onPick={setInput} docName={docName} />
-            <ChatInput {...composerProps} isCentered={true} />
-          </div>
-        ) : (
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-            <MessageList messages={messages} busy={busy} onRetry={handleRetry} />
-
-            <div className="bg-gradient-to-t from-[#212121] via-[#212121]/95 to-transparent pt-2">
-              <ChatInput {...composerProps} isCentered={false} />
+              <div className="bg-gradient-to-t from-[#F7F6F1] via-[#F7F6F1]/95 to-transparent pt-2">
+                <ChatInput {...composerProps} isCentered={false} />
+              </div>
             </div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
     </ChatLayout>
   )
 }

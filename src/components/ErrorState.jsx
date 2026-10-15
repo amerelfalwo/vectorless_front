@@ -1,33 +1,58 @@
 import { CircleAlert, RotateCcw } from 'lucide-react'
 
 /**
- * @param {{ title: string, detail?: string | null, onRetry?: () => void, retryLabel?: string, disabled?: boolean, tone?: 'error' | 'neutral' }} props
+ * @param {{
+ *   title: string,
+ *   detail?: string | null,
+ *   onRetry?: () => void,
+ *   retryLabel?: string,
+ *   disabled?: boolean,
+ *   tone?: 'error' | 'neutral'
+ * }} props
  */
-export function ErrorState({ title, detail, onRetry, retryLabel = 'Retry', disabled, tone = 'error' }) {
+export function ErrorState({
+  title,
+  detail,
+  onRetry,
+  retryLabel = 'Retry',
+  disabled = false,
+  tone = 'error',
+}) {
   const isError = tone === 'error'
+
   return (
     <div
       role={isError ? 'alert' : 'status'}
-      className={`flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border px-3 py-2 text-xs ${
+      className={`flex flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-xl border p-3 text-xs shadow-xs transition ${
         isError
-          ? 'border-red-500/20 bg-red-500/5 text-red-300'
-          : 'border-white/10 bg-white/[0.03] text-zinc-400'
+          ? 'border-red-200 bg-red-50/70 text-red-900'
+          : 'border-[#E4E5DE] bg-[#F7F6F1] text-[#262B27]'
       }`}
     >
-      <CircleAlert className="h-3.5 w-3.5 shrink-0" aria-hidden />
-      <div className="min-w-0 flex-1">
-        <p className="font-medium">{title}</p>
-        {detail ? <p className="mt-0.5 break-words text-[11px] opacity-80">{detail}</p> : null}
+      <div className="flex items-start gap-2.5 min-w-0 flex-1">
+        <CircleAlert
+          className={`h-4 w-4 shrink-0 mt-0.5 ${
+            isError ? 'text-red-700' : 'text-[#777D76]'
+          }`}
+          aria-hidden
+        />
+        <div className="min-w-0 flex-1">
+          <p className="font-medium text-sm leading-tight">{title}</p>
+          {detail ? (
+            <p className="mt-1 break-words text-xs text-[#555B54]">{detail}</p>
+          ) : null}
+        </div>
       </div>
+
       {onRetry ? (
         <button
           type="button"
           onClick={onRetry}
           disabled={disabled}
-          className="flex items-center gap-1 rounded-md border border-white/10 px-2 py-1 text-zinc-200 transition hover:bg-white/10 disabled:opacity-40"
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-[#E4E5DE] bg-white px-2.5 py-1.5 text-xs font-medium text-[#262B27] shadow-xs transition hover:bg-[#F7F6F1] hover:border-[#D0D2C7] active:scale-95 disabled:opacity-40"
         >
-          <RotateCcw className="h-3 w-3" aria-hidden />
-          {retryLabel}
+          <RotateCcw className="h-3.5 w-3.5 text-[#285943]" aria-hidden />
+          <span>{retryLabel}</span>
         </button>
       ) : null}
     </div>

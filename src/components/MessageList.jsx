@@ -5,20 +5,18 @@ import { MessageBubble } from './MessageBubble.jsx'
 const NEAR_BOTTOM_PX = 120
 
 /**
- * Message list with non-intrusive auto-scroll:
- *  - follows the stream only while the user is within NEAR_BOTTOM_PX of the bottom
- *  - once the user scrolls up it stops, and shows a "New content" button
+ * Message list with non-intrusive auto-scroll
  *
  * @param {{
  *   messages: any[],
  *   busy: boolean,
  *   onRetry?: (id: string) => void,
+ *   onSelectCitation?: (source: any) => void,
  * }} props
  */
-export function MessageList({ messages, busy, onRetry }) {
+export function MessageList({ messages, busy, onRetry, onSelectCitation }) {
   const scrollerRef = useRef(null)
   const stickRef = useRef(true)
-  // True while the viewport is at/near the bottom. Only changed from event handlers.
   const [stuck, setStuck] = useState(true)
   const showJump = !stuck && busy
 
@@ -37,12 +35,12 @@ export function MessageList({ messages, busy, onRetry }) {
     setStuck(near)
   }, [])
 
-  // Content changed: follow only if the user is already at the bottom.
+  // Content changed: follow only if the user is already at the bottom
   useEffect(() => {
     if (stickRef.current) scrollToBottom(false)
   }, [messages, scrollToBottom])
 
-  // A brand-new user turn always re-sticks (the user just acted).
+  // A brand-new user turn always re-sticks
   const lastUserId = [...messages].reverse().find((m) => m.role === 'user')?.id
   useEffect(() => {
     if (!lastUserId) return
@@ -53,15 +51,15 @@ export function MessageList({ messages, busy, onRetry }) {
   const lastId = messages[messages.length - 1]?.id
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col">
+    <div className="relative flex min-h-0 flex-1 flex-col bg-[#F7F6F1]">
       <div
         ref={scrollerRef}
         onScroll={handleScroll}
-        className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-4 md:px-8"
+        className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-6 md:px-8 scrollbar-thin"
         role="log"
-        aria-label="Conversation"
+        aria-label="Research Conversation"
       >
-        <div className="mx-auto flex max-w-3xl flex-col gap-3 pb-4">
+        <div className="mx-auto flex max-w-3xl flex-col gap-2 pb-6">
           {messages.map((m) => (
             <MessageBubble
               key={m.id}
@@ -69,6 +67,7 @@ export function MessageList({ messages, busy, onRetry }) {
               isLast={m.id === lastId}
               busy={busy}
               onRetry={onRetry}
+              onSelectCitation={onSelectCitation}
             />
           ))}
         </div>
@@ -82,10 +81,10 @@ export function MessageList({ messages, busy, onRetry }) {
             setStuck(true)
             scrollToBottom(true)
           }}
-          className="absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-white/15 bg-[#2a2a2a] px-3 py-1.5 text-xs text-zinc-200 shadow-lg transition hover:bg-[#333]"
+          className="absolute bottom-4 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-[#E4E5DE] bg-white px-3 py-1.5 text-xs font-medium text-[#262B27] shadow-md transition hover:bg-[#F7F6F1]"
         >
-          <ArrowDown className="h-3.5 w-3.5" aria-hidden />
-          New content
+          <ArrowDown className="h-3.5 w-3.5 text-[#285943]" aria-hidden />
+          <span>New research content</span>
         </button>
       ) : null}
     </div>

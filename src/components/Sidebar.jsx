@@ -1,50 +1,87 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   Plus,
   Search,
   MessageSquare,
-  Trash2,
   FileText,
-  PanelLeftClose,
+  Trash2,
   Pencil,
   Check,
   X,
+  BookOpen,
+  PanelLeftClose,
 } from 'lucide-react'
-import { VectorlessLogo } from './VectorlessLogo.jsx'
+
+import { AtlasLogo } from './AtlasLogo.jsx'
+import { PRODUCT_CONFIG } from '../config/product.js'
 
 /**
- * @typedef {{ chatId: string, docId: string, title: string, updatedAt: number }} ChatSession
+ * Helper to group sessions by date
  */
+function groupSessionsByDate(sessions) {
+  const now = new Date()
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+  const yesterdayStart = todayStart - 86400000
+  const sevenDaysAgo = todayStart - 6 * 86400000
+
+  const groups = {
+    today: [],
+    yesterday: [],
+    previous7Days: [],
+    older: [],
+  }
+
+  for (const s of sessions) {
+    const time = s.updatedAt || 0
+    if (time >= todayStart) {
+      groups.today.push(s)
+    } else if (time >= yesterdayStart) {
+      groups.yesterday.push(s)
+    } else if (time >= sevenDaysAgo) {
+      groups.previous7Days.push(s)
+    } else {
+      groups.older.push(s)
+    }
+  }
+
+  return [
+    { title: 'Today', items: groups.today },
+    { title: 'Yesterday', items: groups.yesterday },
+    { title: 'Previous 7 Days', items: groups.previous7Days },
+    { title: 'Older', items: groups.older },
+  ].filter((g) => g.items.length > 0)
+}
 
 /**
- * @param {{
- *   sessions: ChatSession[]
- *   activeChatId: string | null
- *   isStreaming: boolean
- *   onNewChat: () => void
- *   onSelectSession: (session: ChatSession) => void
- *   onDeleteSession?: (chatId: string) => void
- *   onRenameSession?: (chatId: string, newTitle: string) => void
- *   onCloseSidebar?: () => void
- * }} props
+ * Redesigned Atlas Sidebar
  */
 export function Sidebar({
-  sessions,
+  sessions = [],
   activeChatId,
-  isStreaming,
+  isStreaming = false,
   onNewChat,
   onSelectSession,
   onDeleteSession,
   onRenameSession,
   onCloseSidebar,
+  currentView = 'chat',
+  onNavigate,
 }) {
   const [searchQuery, setSearchQuery] = useState('')
   const [editingChatId, setEditingChatId] = useState(null)
   const [editTitle, setEditTitle] = useState('')
 
-  const filteredSessions = sessions.filter((s) =>
-    (s.title || '').toLowerCase().includes(searchQuery.toLowerCase()),
-  )
+  // Filtered by search
+  const filteredSessions = useMemo(() => {
+    return sessions.filter((s) =>
+      (s.title || '').toLowerCase().includes(searchQuery.toLowerCase()),
+    )
+  }, [sessions, searchQuery])
+
+  // Grouped by date
+  const groupedSessions = useMemo(() => {
+    return groupSessionsByDate(filteredSessions)
+  }, [filteredSessions])
 
   const handleStartRename = (s) => {
     setEditingChatId(s.chatId)
@@ -63,188 +100,262 @@ export function Sidebar({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-[#171717] text-[#ececec] select-none border-r border-white/5">
-      {/* Sidebar Header with Brand Logo & Collapse Toggle */}
-      <div className="flex items-center justify-between px-3 pt-3.5 pb-2">
-        <div className="flex items-center gap-2.5">
-          <VectorlessLogo className="h-6 w-6" />
-          <span className="text-sm font-semibold tracking-wide text-white">
-            Vectorless RAG
-          </span>
-        </div>
+    <nav
+      className="flex h-full min-h-0 flex-col bg-white text-[#262B27] select-none border-r border-[#E4E5DE]"
+      aria-label="Atlas workspace navigation"
+    >
+      {/* Brand Header */}
+      <div className="flex items-center justify-between px-4 pt-4 pb-3 border-b border-[#E4E5DE]">
+        <button
+          type="button"
+          onClick={() => {
+            onNavigate?.('chat')
+            onNewChat()
+          }}
+          className="flex items-center gap-2.5 text-left transition hover:opacity-90"
+        >
+          <AtlasLogo className="h-7 w-7" showText={true} />
+        </button>
 
         {onCloseSidebar ? (
           <button
             type="button"
             onClick={onCloseSidebar}
             title="Collapse sidebar"
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-zinc-400 hover:bg-white/10 hover:text-white transition"
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-[#777D76] transition hover:bg-[#F7F6F1] hover:text-[#262B27]"
           >
             <PanelLeftClose className="h-4 w-4" />
           </button>
         ) : null}
       </div>
 
-      {/* Top Action Buttons */}
-      <div className="flex flex-col gap-2 p-3">
-        {/* New Chat Button */}
+      {/* Primary Actions & Core Navigation */}
+      <div className="flex flex-col gap-2 p-3 border-b border-[#E4E5DE]">
+        {/* Prominent New Research Chat Button */}
         <button
           type="button"
-          onClick={onNewChat}
+          onClick={() => {
+            onNavigate?.('chat')
+            onNewChat()
+          }}
           disabled={isStreaming}
-          className="flex items-center justify-between w-full rounded-xl bg-white/5 hover:bg-white/10 px-3 py-2 text-sm font-normal text-white transition active:scale-[0.98] border border-white/5 disabled:opacity-40"
+          className="flex items-center justify-between w-full rounded-xl bg-[#285943] hover:bg-[#1e4533] px-3.5 py-2.5 text-sm font-medium text-white transition active:scale-[0.98] shadow-sm disabled:opacity-50"
         >
-          <div className="flex items-center gap-2.5">
-            <Plus className="h-4 w-4 text-zinc-300" />
-            <span>New chat</span>
+          <div className="flex items-center gap-2">
+            <Plus className="h-4 w-4 stroke-[2.5]" />
+            <span>New Research</span>
           </div>
-          <span className="text-[11px] text-zinc-500 font-mono">⌘N</span>
+          <span className="text-[11px] font-mono opacity-80">⌘N</span>
         </button>
 
-        {/* Search Input */}
+        {/* View Switchers: Research Workspace vs Document Library */}
+        <div className="flex flex-col gap-0.5 pt-1">
+          <button
+            type="button"
+            onClick={() => onNavigate?.('chat')}
+            className={`flex items-center justify-between rounded-lg px-3 py-2 text-xs font-medium transition ${
+              currentView === 'chat'
+                ? 'bg-[#E8F0E8] text-[#285943]'
+                : 'text-[#777D76] hover:bg-[#F7F6F1] hover:text-[#262B27]'
+            }`}
+          >
+            <div className="flex items-center gap-2.5">
+              <MessageSquare className="h-4 w-4" />
+              <span>Research Workspace</span>
+            </div>
+            {currentView === 'chat' && (
+              <span className="h-1.5 w-1.5 rounded-full bg-[#285943]" />
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onNavigate?.('documents')}
+            className={`flex items-center justify-between rounded-lg px-3 py-2 text-xs font-medium transition ${
+              currentView === 'documents'
+                ? 'bg-[#E8F0E8] text-[#285943]'
+                : 'text-[#777D76] hover:bg-[#F7F6F1] hover:text-[#262B27]'
+            }`}
+          >
+            <div className="flex items-center gap-2.5">
+              <BookOpen className="h-4 w-4" />
+              <span>Document Library</span>
+            </div>
+            {currentView === 'documents' && (
+              <span className="h-1.5 w-1.5 rounded-full bg-[#285943]" />
+            )}
+          </button>
+        </div>
+
+        {/* Search Conversations Input */}
         <div className="relative mt-1">
-          <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-zinc-500" />
+          <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-[#777D76]" />
           <input
             id="sidebar-search-input"
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search chats..."
-            className="w-full rounded-lg bg-[#212121] pl-8 pr-3 py-1.5 text-xs text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:ring-1 focus:ring-white/20"
+            placeholder="Search conversations..."
+            className="w-full rounded-lg border border-[#E4E5DE] bg-[#F7F6F1] pl-8 pr-3 py-1.5 text-xs text-[#262B27] placeholder:text-[#777D76] focus:border-[#285943] focus:bg-white focus:outline-none"
           />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => setSearchQuery('')}
+              className="absolute right-2.5 top-2.5 text-[#777D76] hover:text-[#262B27]"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Sessions List */}
-      <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-4 scrollbar-thin">
-        <p className="px-3 pt-2 pb-1.5 text-[11px] font-medium text-zinc-500 uppercase tracking-wider">
-          Recent chats
-        </p>
-
-        {filteredSessions.length === 0 ? (
-          <div className="px-3 py-4 text-center text-xs text-zinc-500">
-            {searchQuery ? 'No matching chats' : 'No saved chats yet'}
+      {/* Chronologically Grouped Conversations List */}
+      <div className="min-h-0 flex-1 overflow-y-auto px-2 py-3 scrollbar-thin">
+        {groupedSessions.length === 0 ? (
+          <div className="px-3 py-8 text-center text-xs text-[#777D76]">
+            {searchQuery ? 'No matching conversations' : 'No research conversations yet'}
           </div>
         ) : (
-          <ul className="flex flex-col gap-0.5">
-            {filteredSessions.map((s) => {
-              const active = s.chatId === activeChatId
-              const isEditing = editingChatId === s.chatId
+          <div className="flex flex-col gap-4">
+            {groupedSessions.map((group) => (
+              <div key={group.title} className="flex flex-col gap-0.5">
+                <span className="px-3 pb-1 text-[10px] font-semibold tracking-wider uppercase text-[#777D76]">
+                  {group.title}
+                </span>
 
-              if (isEditing) {
-                return (
-                  <li key={s.chatId} className="px-1 py-0.5">
-                    <div className="flex items-center gap-1.5 w-full rounded-lg bg-[#262626] px-2 py-1.5 ring-1 ring-emerald-500/50">
-                      <input
-                        type="text"
-                        value={editTitle}
-                        onChange={(e) => setEditTitle(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') handleSaveRename(s.chatId)
-                          if (e.key === 'Escape') handleCancelRename()
-                        }}
-                        autoFocus
-                        className="min-w-0 flex-1 bg-transparent text-xs text-white placeholder:text-zinc-500 focus:outline-none"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => handleSaveRename(s.chatId)}
-                        title="Save rename"
-                        className="flex h-5 w-5 items-center justify-center rounded text-emerald-400 hover:bg-emerald-500/20"
-                      >
-                        <Check className="h-3.5 w-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleCancelRename}
-                        title="Cancel"
-                        className="flex h-5 w-5 items-center justify-center rounded text-zinc-400 hover:bg-white/10 hover:text-white"
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  </li>
-                )
-              }
+                <ul className="flex flex-col gap-0.5 m-0 p-0 list-none">
+                  {group.items.map((s) => {
+                    const active = s.chatId === activeChatId && currentView === 'chat'
+                    const isEditing = editingChatId === s.chatId
 
-              return (
-                <li key={s.chatId} className="group relative">
-                  <div
-                    className={`flex items-center justify-between w-full rounded-lg px-2.5 py-2 text-left text-xs transition ${
-                      active
-                        ? 'bg-[#212121] text-white font-medium ring-1 ring-white/10'
-                        : 'text-zinc-400 hover:bg-white/5 hover:text-zinc-200'
-                    }`}
-                  >
-                    {/* Session click button */}
-                    <button
-                      type="button"
-                      onClick={() => onSelectSession(s)}
-                      className="flex items-center gap-2 min-w-0 flex-1 text-left"
-                    >
-                      {s.docId ? (
-                        <FileText className="h-3.5 w-3.5 shrink-0 text-red-400" />
-                      ) : (
-                        <MessageSquare className="h-3.5 w-3.5 shrink-0 text-zinc-500 group-hover:text-zinc-300" />
-                      )}
-                      <span className="truncate max-w-[145px]">
-                        {s.title || 'Untitled chat'}
-                      </span>
-                    </button>
+                    if (isEditing) {
+                      return (
+                        <li key={s.chatId} className="px-1 py-0.5">
+                          <div className="flex items-center gap-1.5 rounded-lg border border-[#285943] bg-white px-2 py-1 shadow-xs">
+                            <input
+                              type="text"
+                              value={editTitle}
+                              onChange={(e) => setEditTitle(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') handleSaveRename(s.chatId)
+                                if (e.key === 'Escape') handleCancelRename()
+                              }}
+                              autoFocus
+                              className="min-w-0 flex-1 bg-transparent text-xs text-[#262B27] focus:outline-none"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleSaveRename(s.chatId)}
+                              title="Save title"
+                              className="flex h-5 w-5 items-center justify-center rounded text-[#285943] hover:bg-[#E8F0E8]"
+                            >
+                              <Check className="h-3 w-3" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handleCancelRename}
+                              title="Cancel"
+                              className="flex h-5 w-5 items-center justify-center rounded text-[#777D76] hover:bg-[#F7F6F1]"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </div>
+                        </li>
+                      )
+                    }
 
-                    {/* Actions: Edit name & Delete chat buttons */}
-                    <div
-                      className={`flex items-center gap-0.5 transition-opacity ${
-                        active
-                          ? 'opacity-100'
-                          : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100'
-                      }`}
-                    >
-                      {/* Rename Button */}
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handleStartRename(s)
-                        }}
-                        title="Edit chat name"
-                        className="flex h-6 w-6 items-center justify-center rounded text-zinc-400 hover:bg-white/10 hover:text-white transition"
-                      >
-                        <Pencil className="h-3 w-3" />
-                      </button>
-
-                      {/* Delete Button */}
-                      {onDeleteSession ? (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            onDeleteSession(s.chatId)
-                          }}
-                          title="Delete chat"
-                          className="flex h-6 w-6 items-center justify-center rounded text-zinc-400 hover:bg-white/10 hover:text-red-400 transition"
+                    return (
+                      <li key={s.chatId} className="group relative">
+                        <div
+                          className={`flex items-center justify-between w-full rounded-lg px-2.5 py-2 text-left text-xs transition ${
+                            active
+                              ? 'bg-[#E8F0E8] text-[#285943] font-medium shadow-2xs'
+                              : 'text-[#262B27] hover:bg-[#F7F6F1]'
+                          }`}
                         >
-                          <Trash2 className="h-3 w-3" />
-                        </button>
-                      ) : null}
-                    </div>
-                  </div>
-                </li>
-              )
-            })}
-          </ul>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onNavigate?.('chat')
+                              onSelectSession(s)
+                            }}
+                            className="flex items-center gap-2 min-w-0 flex-1 text-left"
+                          >
+                            {s.docId ? (
+                              <FileText
+                                className={`h-3.5 w-3.5 shrink-0 ${
+                                  active ? 'text-[#285943]' : 'text-[#8DAA91]'
+                                }`}
+                              />
+                            ) : (
+                              <MessageSquare
+                                className={`h-3.5 w-3.5 shrink-0 ${
+                                  active ? 'text-[#285943]' : 'text-[#777D76]'
+                                }`}
+                              />
+                            )}
+                            <span className="truncate max-w-[150px]">
+                              {s.title || 'Untitled conversation'}
+                            </span>
+                          </button>
+
+                          {/* Hover Actions: Rename & Delete */}
+                          <div
+                            className={`flex items-center gap-0.5 transition-opacity ${
+                              active
+                                ? 'opacity-100'
+                                : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100'
+                            }`}
+                          >
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleStartRename(s)
+                              }}
+                              title="Rename conversation"
+                              className="flex h-6 w-6 items-center justify-center rounded text-[#777D76] hover:bg-white hover:text-[#262B27] transition"
+                            >
+                              <Pencil className="h-3 w-3" />
+                            </button>
+
+                            {onDeleteSession && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  onDeleteSession(s.chatId)
+                                }}
+                                title="Delete conversation"
+                                className="flex h-6 w-6 items-center justify-center rounded text-[#777D76] hover:bg-red-50 hover:text-red-600 transition"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </li>
+                    )
+                  })}
+                </ul>
+              </div>
+            ))}
+          </div>
         )}
       </div>
 
-      {/* Footer Info */}
-      <div className="border-t border-white/5 p-3 text-[11px] text-zinc-500">
-        <div className="flex items-center justify-between">
-          <span className="font-medium text-zinc-400">Vectorless RAG</span>
-          <span className="rounded bg-white/5 px-1.5 py-0.5 font-mono text-[10px] text-emerald-400">
-            Qwen 2.5 + Llama 3.1
+      {/* Sidebar Footer */}
+      <div className="border-t border-[#E4E5DE] p-3 text-xs bg-[#F7F6F1]">
+        <div className="flex items-center justify-between text-[#777D76]">
+          <span className="font-serif font-medium text-[#262B27] text-xs">
+            {PRODUCT_CONFIG.name}
+          </span>
+          <span className="font-mono text-[10px] bg-white px-1.5 py-0.5 rounded border border-[#E4E5DE]">
+            v{PRODUCT_CONFIG.version}
           </span>
         </div>
       </div>
-    </div>
+    </nav>
   )
 }

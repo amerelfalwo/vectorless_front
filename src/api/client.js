@@ -76,6 +76,46 @@ export async function retryDocumentIndexing(documentId, opts = {}) {
 }
 
 /**
+ * Fetch all indexed and active documents from the backend.
+ * @returns {Promise<{ documents: Array<{ doc_id: string, filename: string, status: string, page_count: number, section_count: number, current_stage?: string, duration?: number, error?: string, created_at?: number }> }>}
+ */
+export async function listDocuments() {
+  const { data } = await api.get('/documents')
+  return data
+}
+
+/**
+ * Fetch detailed metadata for a single document.
+ * @param {string} documentId
+ * @returns {Promise<{ doc_id: string, filename: string, status: string, page_count: number, section_count: number, indexing_method?: string, duration?: number, error?: string }>}
+ */
+export async function fetchDocumentDetails(documentId) {
+  const { data } = await api.get(`/documents/${encodeURIComponent(documentId)}`)
+  return data
+}
+
+/**
+ * Fetch the hierarchical section tree for an indexed document.
+ * @param {string} documentId
+ * @returns {Promise<{ doc_id: string, filename: string, tree: Array<any> }>}
+ */
+export async function fetchDocumentTree(documentId) {
+  const { data } = await api.get(`/documents/${encodeURIComponent(documentId)}/tree`)
+  return data
+}
+
+/**
+ * Permanently delete a document and its index.
+ * @param {string} documentId
+ * @returns {Promise<{ message: string, doc_id: string }>}
+ */
+export async function deleteDocument(documentId) {
+  const { data } = await api.delete(`/documents/${encodeURIComponent(documentId)}`)
+  return data
+}
+
+
+/**
  * @returns {Promise<{ chat_id: string }>}
  */
 export async function createChat() {
