@@ -18,7 +18,6 @@ import {
   detachSpecificDocument,
 } from './api/client.js'
 import { ChatLayout } from './components/ChatLayout.jsx'
-import { TopNav } from './components/TopNav.jsx'
 import { ChatInput } from './components/ChatInput.jsx'
 import { EmptyState } from './components/EmptyState.jsx'
 import { MessageList } from './components/MessageList.jsx'
@@ -888,14 +887,6 @@ export default function App() {
     [documentTree, loadDocTree, attachedDocs],
   )
 
-  // Current session title for TopNav
-  const currentSessionTitle = useMemo(() => {
-    if (currentView === 'documents') return 'Document Library'
-    if (currentView === 'knowledge') return 'Collective Knowledge Memory'
-    const s = sessions.find((item) => item.chatId === chatId)
-    return s?.title || 'Research Workspace'
-  }, [currentView, sessions, chatId])
-
   const sidebar = (
     <Sidebar
       sessions={sessions}
@@ -905,24 +896,18 @@ export default function App() {
       onSelectSession={handleSelectSession}
       onDeleteSession={handleDeleteSession}
       onRenameSession={handleRenameSession}
-      onCloseSidebar={() => setMobileSidebarOpen(false)}
+      onCloseSidebar={() => {
+        setSidebarCollapsed(true)
+        setMobileSidebarOpen(false)
+      }}
       currentView={currentView}
       onNavigate={handleNavigate}
-    />
-  )
-
-  const topNav = (
-    <TopNav
-      title={currentSessionTitle}
       attachedDocs={attachedDocs}
       availableDocs={availableDocs}
       onAttachDoc={handleAttachDoc}
       onDetachDoc={handleDetachSpecificDoc}
       onToggleStructureExplorer={attachedDocs.length > 0 ? toggleStructureExplorer : undefined}
       structureExplorerOpen={structureExplorerOpen}
-      onOpenMobileSidebar={() => setMobileSidebarOpen(true)}
-      currentView={currentView}
-      onNavigate={handleNavigate}
     />
   )
 
@@ -966,7 +951,6 @@ export default function App() {
   return (
     <ChatLayout
       sidebar={sidebar}
-      topNav={topNav}
       structureExplorer={structureExplorerNode}
       mobileSidebarOpen={mobileSidebarOpen}
       onMobileSidebarOpenChange={setMobileSidebarOpen}

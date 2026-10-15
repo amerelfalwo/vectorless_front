@@ -199,7 +199,7 @@ export function DocumentLibrary({
     <div className="flex h-full min-h-0 flex-1 overflow-hidden bg-[#F7F6F1]">
       <div className="flex min-w-0 flex-1 flex-col overflow-y-auto">
         {/* Page Header */}
-        <header className="border-b border-[#E4E5DE] bg-white px-6 py-6 md:px-10">
+        <header className="border-b border-[#E4E5DE] bg-white px-6 py-6 pl-14 md:px-10">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div>
               <div className="flex items-center gap-2">

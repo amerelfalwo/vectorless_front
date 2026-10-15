@@ -80,7 +80,7 @@ export function KnowledgeMemoryView({ onStartChatWithDoc, onAskAboutKnowledge })
   })
 
   return (
-    <div className="flex h-full min-h-0 flex-1 flex-col overflow-y-auto bg-[#F7F6F1] p-4 md:p-8">
+    <div className="flex h-full min-h-0 flex-1 flex-col overflow-y-auto bg-[#F7F6F1] p-4 md:p-8 pt-12 md:pt-8">
       <div className="mx-auto w-full max-w-6xl space-y-6">
         {/* Header Section */}
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-[#E4E5DE] pb-6">
