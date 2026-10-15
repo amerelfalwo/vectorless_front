@@ -11,9 +11,6 @@ import {
   BookOpen,
   PanelLeftClose,
   Brain,
-  ChevronDown,
-  FolderTree,
-  Paperclip,
 } from 'lucide-react'
 
 import { AtlasLogo } from './AtlasLogo.jsx'
@@ -82,20 +79,6 @@ export function Sidebar({
   const [searchQuery, setSearchQuery] = useState('')
   const [editingChatId, setEditingChatId] = useState(null)
   const [editTitle, setEditTitle] = useState('')
-  const [attachDropdownOpen, setAttachDropdownOpen] = useState(false)
-  const attachDropdownRef = useRef(null)
-
-  // Close attach dropdown on outside click
-  useEffect(() => {
-    function handleClickOutside(event) {
-      if (attachDropdownRef.current && !attachDropdownRef.current.contains(event.target)) {
-        setAttachDropdownOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [])
-
   // Filtered by search
   const filteredSessions = useMemo(() => {
     return sessions.filter((s) =>
@@ -108,12 +91,7 @@ export function Sidebar({
     return groupSessionsByDate(filteredSessions)
   }, [filteredSessions])
 
-  // Filter available docs to those not attached yet
-  const unattachedDocs = useMemo(() => {
-    return (availableDocs || []).filter(
-      (d) => !attachedDocs.some((ad) => ad.doc_id === d.doc_id),
-    )
-  }, [availableDocs, attachedDocs])
+
 
   const handleStartRename = (s) => {
     setEditingChatId(s.chatId)
@@ -218,110 +196,7 @@ export function Sidebar({
         </button>
       </div>
 
-      {/* 3. Session Attached Documents Section (Shown in Research Workspace) */}
-      {currentView === 'chat' && (
-        <div className="p-3 border-b border-[#E4E5DE] space-y-2 bg-[#F7F6F1]/50">
-          <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-[#777D76]">
-            <div className="flex items-center gap-1.5">
-              <Paperclip className="h-3.5 w-3.5" />
-              <span>Attached Documents ({attachedDocs.length})</span>
-            </div>
 
-            {/* Structure Explorer Toggle Button */}
-            {onToggleStructureExplorer && attachedDocs.length > 0 && (
-              <button
-                type="button"
-                onClick={onToggleStructureExplorer}
-                title={structureExplorerOpen ? 'Hide outline tree' : 'Explore outline tree'}
-                className={`flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium transition ${
-                  structureExplorerOpen
-                    ? 'bg-[#285943] text-white'
-                    : 'text-[#285943] bg-[#E8F0E8] hover:bg-[#285943] hover:text-white'
-                }`}
-              >
-                <FolderTree className="h-2.5 w-2.5" />
-                <span>Tree</span>
-              </button>
-            )}
-          </div>
-
-          {/* Attached Document Pills List */}
-          {attachedDocs.length > 0 ? (
-            <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
-              {attachedDocs.map((doc) => (
-                <div
-                  key={doc.doc_id}
-                  className="flex items-center justify-between gap-1.5 rounded-lg border border-[#E4E5DE] bg-white px-2.5 py-1 text-xs shadow-2xs"
-                >
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <FileText className="h-3 w-3 shrink-0 text-[#285943]" />
-                    <span className="truncate text-xs font-medium text-[#262B27] max-w-[170px]">
-                      {doc.filename || 'Document'}
-                    </span>
-                  </div>
-
-                  {onDetachDoc && (
-                    <button
-                      type="button"
-                      onClick={() => onDetachDoc(doc.doc_id)}
-                      title="Detach document"
-                      className="rounded p-0.5 text-[#777D76] hover:bg-red-50 hover:text-red-700 transition"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="text-[11px] text-[#777D76] italic">
-              No documents attached. You can chat freely or attach PDFs.
-            </p>
-          )}
-
-          {/* "+ Attach from Library" Dropdown */}
-          {onAttachDoc && unattachedDocs.length > 0 && (
-            <div className="relative pt-1" ref={attachDropdownRef}>
-              <button
-                type="button"
-                onClick={() => setAttachDropdownOpen((prev) => !prev)}
-                className="flex items-center justify-center gap-1.5 w-full rounded-lg border border-dashed border-[#8DAA91] bg-white px-2.5 py-1.5 text-xs font-medium text-[#285943] transition hover:bg-[#E8F0E8]"
-              >
-                <Plus className="h-3 w-3" />
-                <span>Attach from Library</span>
-                <ChevronDown className="h-3 w-3 opacity-60" />
-              </button>
-
-              {attachDropdownOpen && (
-                <div className="absolute left-0 right-0 mt-1 rounded-xl border border-[#E4E5DE] bg-white py-1.5 shadow-lg z-50">
-                  <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-[#777D76] border-b border-[#E4E5DE]/60">
-                    Ready Documents
-                  </div>
-                  <div className="max-h-40 overflow-y-auto">
-                    {unattachedDocs.map((d) => (
-                      <button
-                        key={d.doc_id}
-                        type="button"
-                        onClick={() => {
-                          onAttachDoc(d)
-                          setAttachDropdownOpen(false)
-                        }}
-                        className="flex items-center gap-2 w-full px-3 py-1.5 text-left text-xs text-[#262B27] hover:bg-[#F7F6F1] transition"
-                      >
-                        <FileText className="h-3 w-3 text-[#285943] shrink-0" />
-                        <span className="truncate flex-1 font-medium">{d.filename}</span>
-                        {d.page_count ? (
-                          <span className="text-[10px] text-[#777D76]">{d.page_count}p</span>
-                        ) : null}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
 
       {/* 4. Action: Prominent New Research Chat Button */}
       <div className="p-3 border-b border-[#E4E5DE]">

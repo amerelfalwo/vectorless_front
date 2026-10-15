@@ -30,6 +30,12 @@ import {
   patchSession,
   upsertSession,
   deleteSession,
+  loadActiveChatId,
+  saveActiveChatId,
+  loadChatMessages,
+  saveChatMessages,
+  deleteChatMessages,
+  mergeSessions,
 } from './lib/sessionsStorage.js'
 
 import {
@@ -101,9 +107,24 @@ export default function App() {
   const [attachedDocs, setAttachedDocs] = useState([])
   const [availableDocs, setAvailableDocs] = useState([])
 
-  const [chatId, setChatId] = useState(null)
-  const [messages, setMessages] = useState([])
   const [sessions, setSessions] = useState(() => loadSessions())
+  const [chatId, setChatId] = useState(() => {
+    const active = loadActiveChatId()
+    const all = loadSessions()
+    if (active && all.some((s) => s.chatId === active)) {
+      return active
+    }
+    return all.length > 0 ? all[0].chatId : null
+  })
+  const [messages, setMessages] = useState(() => {
+    const active = loadActiveChatId()
+    const all = loadSessions()
+    const targetId = active && all.some((s) => s.chatId === active) ? active : all[0]?.chatId
+    if (targetId) {
+      return loadChatMessages(targetId)
+    }
+    return []
+  })
   const [input, setInput] = useState('')
 
   const [attachedFile, setAttachedFile] = useState(null)
@@ -122,6 +143,20 @@ export default function App() {
   const docRef = useRef({ id: null, name: null })
   const turnsRef = useRef(new Map())
   const bufferRef = useRef({ id: null, text: '', raf: 0 })
+
+  // Keep active chat ID persisted
+  useEffect(() => {
+    if (chatId) {
+      saveActiveChatId(chatId)
+    }
+  }, [chatId])
+
+  // Keep messages persisted locally per chat
+  useEffect(() => {
+    if (chatId && messages.length > 0) {
+      saveChatMessages(chatId, messages)
+    }
+  }, [chatId, messages])
 
   // Synchronize browser history and route navigation
   const handleNavigate = useCallback((view) => {
@@ -213,7 +248,7 @@ export default function App() {
     [],
   )
 
-  // Load persisted chat sessions from backend on startup
+  // Load persisted chat sessions from backend on startup and merge without dropping local sessions
   useEffect(() => {
     listChats()
       .then(({ chats }) => {
@@ -225,8 +260,8 @@ export default function App() {
           title: c.title || 'New research',
           updatedAt: Math.round((c.updated_at || Date.now() / 1000) * 1000),
         }))
-        setSessions(mapped)
-        mapped.forEach((s) => upsertSession(s))
+        const merged = mergeSessions(loadSessions(), mapped)
+        setSessions(merged)
       })
       .catch((e) => console.warn('Could not load sessions from backend:', e))
   }, [])
@@ -256,6 +291,7 @@ export default function App() {
     try {
       const { chat_id } = await createChat()
       setChatId(chat_id)
+      saveActiveChatId(chat_id)
       setSessions(
         upsertSession({
           chatId: chat_id,
@@ -327,15 +363,28 @@ export default function App() {
       setMobileSidebarOpen(false)
       handleNavigate('chat')
       setChatId(session.chatId)
+      saveActiveChatId(session.chatId)
+
+      // 1. Immediately display cached messages so there is zero flicker / data loss
+      const cached = loadChatMessages(session.chatId)
+      if (cached && cached.length > 0) {
+        setMessages(cached)
+      }
 
       try {
-        // 1. Fetch isolated chat history
+        // 2. Fetch isolated chat history from backend
         const data = await fetchChatHistory(session.chatId)
-        setMessages(mapHistoryToMessages(data.history))
+        if (data?.history && data.history.length > 0) {
+          const serverMsgs = mapHistoryToMessages(data.history)
+          setMessages(serverMsgs)
+          saveChatMessages(session.chatId, serverMsgs)
+        } else if (!cached || cached.length === 0) {
+          setMessages([])
+        }
 
-        // 2. Fetch isolated attached documents for this specific session
+        // 3. Fetch isolated attached documents for this specific session
         const docsData = await fetchChatDocs(session.chatId)
-        const currentDocs = docsData.documents || []
+        const currentDocs = docsData?.documents || []
         setAttachedDocs(currentDocs)
 
         if (currentDocs.length > 0) {
@@ -346,11 +395,12 @@ export default function App() {
           setAgentStatus('idle')
         }
       } catch (e) {
-        console.error(e)
-        setMessages([])
-        setAttachedDocs([])
-        applyDoc(null, null)
-        toast.error('Failed to load conversation history.')
+        console.warn('Backend load failed, preserving local session data:', e)
+        if (!cached || cached.length === 0) {
+          setMessages([])
+          setAttachedDocs([])
+          applyDoc(null, null)
+        }
       }
     },
     [applyDoc, handleNavigate],
@@ -672,9 +722,28 @@ export default function App() {
   )
 
   const handleSend = useCallback(
-    async (text, fileOverride = null) => {
-      const q = text.trim()
-      const fileToSend = fileOverride || attachedFile
+    async (textOrOpts, fileOrOpts = null) => {
+      let q = ''
+      let deepAnalysis = false
+      let fileToSend = attachedFile
+
+      if (typeof textOrOpts === 'string') {
+        q = textOrOpts.trim()
+        if (fileOrOpts instanceof File) {
+          fileToSend = fileOrOpts
+        } else if (fileOrOpts && typeof fileOrOpts === 'object') {
+          deepAnalysis = Boolean(fileOrOpts.deepAnalysis)
+        }
+      } else if (textOrOpts && typeof textOrOpts === 'object') {
+        q = input.trim()
+        deepAnalysis = Boolean(textOrOpts.deepAnalysis)
+        if (fileOrOpts instanceof File) {
+          fileToSend = fileOrOpts
+        }
+      } else {
+        q = input.trim()
+      }
+
       if (!q && !fileToSend) return
       if (BUSY_STATUSES.has(agentStatus)) return
 
@@ -684,6 +753,7 @@ export default function App() {
           const { chat_id } = await createChat()
           cid = chat_id
           setChatId(chat_id)
+          saveActiveChatId(chat_id)
         } catch (e) {
           console.error(e)
           toast.error('Could not start research conversation.')
@@ -698,7 +768,7 @@ export default function App() {
       const entry = {
         query: q,
         file: fileToSend,
-        deepAnalysis: false,
+        deepAnalysis: Boolean(deepAnalysis),
       }
       turnsRef.current.set(turnKey, { entry, chatId: cid })
 
@@ -742,7 +812,9 @@ export default function App() {
         steps: createSteps(Boolean(fileToSend)),
       }
 
-      setMessages((prev) => [...prev, userBubble, assistantBubble])
+      const nextMessages = [...messages, userBubble, assistantBubble]
+      setMessages(nextMessages)
+      saveChatMessages(cid, nextMessages)
       setInput('')
       setAttachedFile(null)
 
@@ -753,7 +825,7 @@ export default function App() {
         chatId: cid,
       })
     },
-    [agentStatus, attachedFile, chatId, messages.length, processTurn],
+    [agentStatus, attachedFile, chatId, input, messages, processTurn],
   )
 
   const handleRetry = useCallback(
@@ -799,7 +871,11 @@ export default function App() {
       const remaining = deleteSession(sessionId)
       setSessions(remaining)
       if (chatId === sessionId) {
-        handleNewChat()
+        if (remaining.length > 0) {
+          handleSelectSession(remaining[0])
+        } else {
+          handleNewChat()
+        }
       }
       try {
         await deleteChat(sessionId)
@@ -808,7 +884,7 @@ export default function App() {
       }
       toast.success('Conversation deleted.')
     },
-    [chatId, handleNewChat],
+    [chatId, handleNewChat, handleSelectSession],
   )
 
   // Rename chat

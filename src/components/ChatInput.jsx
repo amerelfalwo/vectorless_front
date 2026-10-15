@@ -142,7 +142,7 @@ export function ChatInput({
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                   e.preventDefault()
-                  if (!inputLocked && hasTextOrFile) onSend({ deepAnalysis })
+                  if (!inputLocked && hasTextOrFile) onSend(value, { deepAnalysis })
                 }
               }}
               disabled={inputLocked}
@@ -234,7 +234,7 @@ export function ChatInput({
               ) : (
                 <button
                   type="button"
-                  onClick={() => onSend({ deepAnalysis })}
+                  onClick={() => onSend(value, { deepAnalysis })}
                   disabled={inputLocked || !hasTextOrFile}
                   title="Send question"
                   aria-label="Send question"
