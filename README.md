@@ -22,6 +22,16 @@ All branding tokens and product metadata are managed centrally in [`src/config/p
 
 ## ✨ Features
 
+- **🧠 Collective Knowledge Memory (`/knowledge`):**
+  - Unified workspace knowledge memory synthesizing insights across all indexed documents.
+  - Displays overarching domain themes, key cross-cutting insights, and structured document dossiers.
+  - Interactive topic filters and instant action to query across the collective knowledge base.
+
+- **📚 Multi-Document Research Sessions:**
+  - Attach multiple PDFs to a single research conversation to cross-examine and compare evidence.
+  - Top navigation chips with instant detachment and an "+ Attach from Library" popover.
+  - **Strict Session Isolation:** Complete state and history isolation between chat sessions—zero cross-session data leakage.
+
 - **📑 Dedicated Document Library (`/documents`):**
   - Searchable inventory table of all ingested documents.
   - Document metrics: file size, page count, hierarchical section count, and indexing status.
