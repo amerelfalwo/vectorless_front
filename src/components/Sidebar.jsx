@@ -10,6 +10,7 @@ import {
   X,
   BookOpen,
   PanelLeftClose,
+  Brain,
 } from 'lucide-react'
 
 import { AtlasLogo } from './AtlasLogo.jsx'
@@ -182,6 +183,24 @@ export function Sidebar({
               <span>Document Library</span>
             </div>
             {currentView === 'documents' && (
+              <span className="h-1.5 w-1.5 rounded-full bg-[#285943]" />
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onNavigate?.('knowledge')}
+            className={`flex items-center justify-between rounded-lg px-3 py-2 text-xs font-medium transition ${
+              currentView === 'knowledge'
+                ? 'bg-[#E8F0E8] text-[#285943]'
+                : 'text-[#777D76] hover:bg-[#F7F6F1] hover:text-[#262B27]'
+            }`}
+          >
+            <div className="flex items-center gap-2.5">
+              <Brain className="h-4 w-4 text-[#8DAA91]" />
+              <span>Collective Knowledge</span>
+            </div>
+            {currentView === 'knowledge' && (
               <span className="h-1.5 w-1.5 rounded-full bg-[#285943]" />
             )}
           </button>

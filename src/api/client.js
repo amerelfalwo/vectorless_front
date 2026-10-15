@@ -146,10 +146,82 @@ export async function attachDocumentToChat(chatId, docId) {
 
 /**
  * @param {string} chatId
+ * @param {string[]} docIds
+ * @returns {Promise<{ message: string, chat_id: string, doc_ids: string[] }>}
+ */
+export async function attachMultipleDocuments(chatId, docIds) {
+  const { data } = await api.post(`/chat/${encodeURIComponent(chatId)}/attach-multiple`, {
+    doc_ids: docIds,
+  })
+  return data
+}
+
+/**
+ * Fetch all documents attached to an active chat session.
+ * @param {string} chatId
+ * @returns {Promise<{ chat_id: string, documents: Array<{ doc_id: string, filename: string, status?: string, page_count?: number, section_count?: number }> }>}
+ */
+export async function fetchChatDocs(chatId) {
+  const { data } = await api.get(`/chat/${encodeURIComponent(chatId)}/documents`)
+  return data
+}
+
+/**
+ * Detach a specific document from a chat session.
+ * @param {string} chatId
+ * @param {string} docId
+ * @returns {Promise<{ message: string, chat_id: string, doc_id: string }>}
+ */
+export async function detachSpecificDocument(chatId, docId) {
+  const { data } = await api.delete(`/chat/${encodeURIComponent(chatId)}/document/${encodeURIComponent(docId)}`)
+  return data
+}
+
+/**
+ * Detach all documents from active chat session.
+ * @param {string} chatId
  * @returns {Promise<{ message: string, chat_id: string }>}
  */
 export async function detachDocumentFromChat(chatId) {
   const { data } = await api.delete(`/chat/${encodeURIComponent(chatId)}/document`)
+  return data
+}
+
+/**
+ * Retrieve collective workspace master knowledge summary and all per-document dossiers.
+ * @returns {Promise<{ collective_summary: string, total_documents: number, key_insights: string[], updated_at?: number, dossiers: Array<any> }>}
+ */
+export async function fetchGlobalKnowledge() {
+  const { data } = await api.get('/memory/knowledge')
+  return data
+}
+
+/**
+ * Trigger synthesis to refresh the global workspace knowledge memory.
+ * @returns {Promise<{ message: string, collective_summary: string, total_documents: number, key_insights: string[], dossiers: Array<any> }>}
+ */
+export async function refreshGlobalKnowledge() {
+  const { data } = await api.post('/memory/knowledge/refresh')
+  return data
+}
+
+/**
+ * Retrieve the isolated short-term turns and long-term rolling summary for a chat.
+ * @param {string} chatId
+ * @returns {Promise<{ chat_id: string, session_summary?: string, recent_turns_count: number, recent_turns: Array<any>, attached_documents: Array<any> }>}
+ */
+export async function fetchChatMemoryContext(chatId) {
+  const { data } = await api.get(`/memory/chat/${encodeURIComponent(chatId)}`)
+  return data
+}
+
+/**
+ * Force-update long-term rolling summary for a chat session.
+ * @param {string} chatId
+ * @returns {Promise<{ message: string, chat_id: string, summary: string }>}
+ */
+export async function forceSummarizeChat(chatId) {
+  const { data } = await api.post(`/memory/chat/${encodeURIComponent(chatId)}/summarize`)
   return data
 }
 
@@ -186,6 +258,7 @@ export async function renameChat(chatId, title) {
  *
  * @param {{
  *   doc_id?: string,
+ *   doc_ids?: string[],
  *   doc_name?: string,
  *   chat_id: string,
  *   query: string,
@@ -197,6 +270,7 @@ export async function renameChat(chatId, title) {
  */
 export async function streamAsk({
   doc_id,
+  doc_ids,
   doc_name,
   chat_id,
   query,
@@ -208,7 +282,7 @@ export async function streamAsk({
   const res = await fetch(`${API_BASE_URL}/ask`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-    body: JSON.stringify({ doc_id, doc_name, chat_id, query, deep_analysis }),
+    body: JSON.stringify({ doc_id, doc_ids, doc_name, chat_id, query, deep_analysis }),
     signal,
   })
 
