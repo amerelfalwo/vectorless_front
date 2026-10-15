@@ -11,10 +11,13 @@ import {
   BookOpen,
   PanelLeftClose,
   Brain,
+  Loader2,
 } from 'lucide-react'
 
 import { AtlasLogo } from './AtlasLogo.jsx'
 import { PRODUCT_CONFIG } from '../config/product.js'
+
+const BUSY_STATUSES = new Set(['uploading', 'indexing', 'retrieving', 'generating', 'streaming'])
 
 /**
  * Helper to group sessions by date
@@ -62,6 +65,8 @@ export function Sidebar({
   sessions = [],
   activeChatId,
   isStreaming = false,
+  unreadSessionIds = new Set(),
+  sessionStatuses = {},
   onNewChat,
   onSelectSession,
   onDeleteSession,
@@ -313,9 +318,32 @@ export function Sidebar({
                                 }`}
                               />
                             )}
-                            <span className="truncate max-w-[150px]">
+                            <span className="truncate max-w-[140px]">
                               {s.title || 'Untitled conversation'}
                             </span>
+
+                            {/* Red Dot completion notification when finished in background */}
+                            {unreadSessionIds?.has?.(s.chatId) && (
+                              <span
+                                className="relative flex h-2 w-2 shrink-0 ml-1"
+                                title="New research completed"
+                              >
+                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                                <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500 shadow-2xs"></span>
+                              </span>
+                            )}
+
+                            {/* Background Active Processing Badge */}
+                            {!active &&
+                              sessionStatuses?.[s.chatId] &&
+                              BUSY_STATUSES.has(sessionStatuses[s.chatId]) && (
+                                <span
+                                  className="flex items-center gap-1 text-[10px] text-[#285943] bg-[#E8F0E8] px-1.5 py-0.5 rounded-full font-mono shrink-0 ml-auto mr-1"
+                                  title="Active research in background"
+                                >
+                                  <Loader2 className="h-2.5 w-2.5 animate-spin text-[#285943]" />
+                                </span>
+                              )}
                           </button>
 
                           {/* Hover Actions: Rename & Delete */}

@@ -25,6 +25,7 @@ import { Sidebar } from './components/Sidebar.jsx'
 import { DocumentLibrary } from './components/DocumentLibrary.jsx'
 import { DocumentStructureExplorer } from './components/DocumentStructureExplorer.jsx'
 import { KnowledgeMemoryView } from './components/KnowledgeMemoryView.jsx'
+import { CenterNotification } from './components/CenterNotification.jsx'
 import {
   loadSessions,
   patchSession,
@@ -128,7 +129,15 @@ export default function App() {
   const [input, setInput] = useState('')
 
   const [attachedFile, setAttachedFile] = useState(null)
-  const [agentStatus, setAgentStatus] = useState('idle')
+  
+  // Asynchronous multi-session concurrency state
+  const [sessionStatuses, setSessionStatuses] = useState({})
+  const [unreadSessionIds, setUnreadSessionIds] = useState(() => new Set())
+  const [centerNotice, setCenterNotice] = useState(null)
+
+  // Status of the currently active session
+  const agentStatus = (chatId && sessionStatuses[chatId]) ? sessionStatuses[chatId] : 'idle'
+  const busy = BUSY_STATUSES.has(agentStatus)
 
   // UI state
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
@@ -137,12 +146,38 @@ export default function App() {
   const [documentTree, setDocumentTree] = useState(null)
   const [activeTreeNodeId, setActiveTreeNodeId] = useState(null)
 
-  const busy = BUSY_STATUSES.has(agentStatus)
-
-  const streamAbortRef = useRef(null)
   const docRef = useRef({ id: null, name: null })
   const turnsRef = useRef(new Map())
-  const bufferRef = useRef({ id: null, text: '', raf: 0 })
+  const sessionStreamsRef = useRef(new Map())
+  const sessionBuffersRef = useRef(new Map())
+  const currentChatIdRef = useRef(chatId)
+  currentChatIdRef.current = chatId
+  const messagesRef = useRef(messages)
+  messagesRef.current = messages
+  const sessionsRef = useRef(sessions)
+  sessionsRef.current = sessions
+  const attachedDocsByChatRef = useRef(new Map())
+
+  const setSessionStatus = useCallback((targetChatId, status) => {
+    setSessionStatuses((prev) => {
+      if (prev[targetChatId] === status) return prev
+      return { ...prev, [targetChatId]: status }
+    })
+  }, [])
+
+  const patchSessionMessages = useCallback((targetChatId, updater) => {
+    if (currentChatIdRef.current === targetChatId) {
+      setMessages((prev) => {
+        const next = typeof updater === 'function' ? updater(prev) : updater
+        saveChatMessages(targetChatId, next)
+        return next
+      })
+    } else {
+      const current = loadChatMessages(targetChatId) || []
+      const next = typeof updater === 'function' ? updater(current) : updater
+      saveChatMessages(targetChatId, next)
+    }
+  }, [])
 
   // Keep active chat ID persisted
   useEffect(() => {
@@ -225,25 +260,35 @@ export default function App() {
     })
   }, [documentTree, loadDocTree, attachedDocs])
 
-  const flushNow = useCallback(() => {
-    const buf = bufferRef.current
-    if (buf.raf) {
-      cancelAnimationFrame(buf.raf)
-      buf.raf = 0
-    }
-    if (!buf.text || !buf.id) return
-    const { id, text } = buf
-    buf.text = ''
-    setMessages((prev) =>
-      patchById(prev, id, (m) => ({ ...m, content: (m.content ?? '') + text })),
-    )
-  }, [])
+  const flushSessionBuffer = useCallback(
+    (targetChatId, assistantId) => {
+      const buf = sessionBuffersRef.current.get(targetChatId)
+      if (!buf) return
+      if (buf.raf) {
+        cancelAnimationFrame(buf.raf)
+        buf.raf = 0
+      }
+      if (!buf.text) return
+      const chunkText = buf.text
+      buf.text = ''
+      patchSessionMessages(targetChatId, (prev) =>
+        patchById(prev, assistantId, (m) => ({
+          ...m,
+          content: (m.content ?? '') + chunkText,
+        })),
+      )
+    },
+    [patchSessionMessages],
+  )
 
   useEffect(
     () => () => {
-      const buf = bufferRef.current
-      if (buf.raf) cancelAnimationFrame(buf.raf)
-      streamAbortRef.current?.abort()
+      sessionBuffersRef.current.forEach((buf) => {
+        if (buf.raf) cancelAnimationFrame(buf.raf)
+      })
+      sessionStreamsRef.current.forEach((st) => {
+        st.controller?.abort()
+      })
     },
     [],
   )
@@ -279,13 +324,11 @@ export default function App() {
   }, [])
 
   const handleNewChat = useCallback(async () => {
-    if (BUSY_STATUSES.has(agentStatus)) return
     setInput('')
     setAttachedFile(null)
     applyDoc(null, null)
     setAttachedDocs([])
     setMessages([])
-    setAgentStatus('idle')
     setStructureExplorerOpen(false)
 
     try {
@@ -306,11 +349,15 @@ export default function App() {
       console.error(e)
       toast.error('Failed to initialize research session.')
     }
-  }, [agentStatus, applyDoc, handleNavigate])
+  }, [applyDoc, handleNavigate])
 
   const handleStop = useCallback(() => {
-    streamAbortRef.current?.abort()
-  }, [])
+    if (!chatId) return
+    const activeStream = sessionStreamsRef.current.get(chatId)
+    if (activeStream?.controller) {
+      activeStream.controller.abort()
+    }
+  }, [chatId])
 
   /**
    * Polls GET /documents/{docId}/status until status is 'ready' or 'failed'.
@@ -356,14 +403,21 @@ export default function App() {
    */
   const handleSelectSession = useCallback(
     async (session) => {
-      streamAbortRef.current?.abort()
-      streamAbortRef.current = null
       setInput('')
       setAttachedFile(null)
       setMobileSidebarOpen(false)
       handleNavigate('chat')
       setChatId(session.chatId)
       saveActiveChatId(session.chatId)
+
+      // Clear unread red dot if this session completed in the background
+      setUnreadSessionIds((prev) => {
+        if (!prev.has(session.chatId)) return prev
+        const next = new Set(prev)
+        next.delete(session.chatId)
+        return next
+      })
+      setCenterNotice((prev) => (prev?.chatId === session.chatId ? null : prev))
 
       // 1. Immediately display cached messages so there is zero flicker / data loss
       const cached = loadChatMessages(session.chatId)
@@ -386,13 +440,19 @@ export default function App() {
         const docsData = await fetchChatDocs(session.chatId)
         const currentDocs = docsData?.documents || []
         setAttachedDocs(currentDocs)
+        attachedDocsByChatRef.current.set(session.chatId, currentDocs)
 
-        if (currentDocs.length > 0) {
+        const isCurrentlyBusy = BUSY_STATUSES.has(sessionStatuses[session.chatId])
+        if (!isCurrentlyBusy) {
+          if (currentDocs.length > 0) {
+            applyDoc(currentDocs[0].doc_id, currentDocs[0].filename)
+            setSessionStatus(session.chatId, 'ready')
+          } else {
+            applyDoc(null, null)
+            setSessionStatus(session.chatId, 'idle')
+          }
+        } else if (currentDocs.length > 0) {
           applyDoc(currentDocs[0].doc_id, currentDocs[0].filename)
-          setAgentStatus('ready')
-        } else {
-          applyDoc(null, null)
-          setAgentStatus('idle')
         }
       } catch (e) {
         console.warn('Backend load failed, preserving local session data:', e)
@@ -403,7 +463,7 @@ export default function App() {
         }
       }
     },
-    [applyDoc, handleNavigate],
+    [applyDoc, handleNavigate, sessionStatuses, setSessionStatus],
   )
 
   /**
@@ -421,13 +481,13 @@ export default function App() {
         if (!docRef.current.id) {
           applyDoc(doc.doc_id, doc.filename)
         }
-        setAgentStatus('ready')
+        setSessionStatus(chatId, 'ready')
         toast.success(`Attached "${doc.filename}" to session`)
       } catch (err) {
         toast.error('Failed to attach document')
       }
     },
-    [chatId, applyDoc],
+    [chatId, applyDoc, setSessionStatus],
   )
 
   /**
@@ -444,7 +504,7 @@ export default function App() {
             applyDoc(next[0].doc_id, next[0].filename)
           } else {
             applyDoc(null, null)
-            setAgentStatus('idle')
+            setSessionStatus(chatId, 'idle')
           }
           return next
         })
@@ -453,7 +513,7 @@ export default function App() {
         toast.error('Failed to detach document')
       }
     },
-    [chatId, applyDoc],
+    [chatId, applyDoc, setSessionStatus],
   )
 
   /**
@@ -462,16 +522,16 @@ export default function App() {
   const processTurn = useCallback(
     async ({ assistantId, userId, entry, chatId: cid }) => {
       const controller = new AbortController()
-      streamAbortRef.current = controller
+      sessionStreamsRef.current.set(cid, { controller, assistantId, entry })
       const { signal } = controller
 
-      const patchAssistant = (fn) => setMessages((prev) => patchById(prev, assistantId, fn))
+      const patchAssistant = (fn) =>
+        patchSessionMessages(cid, (prev) => patchById(prev, assistantId, fn))
       const patchUser = (fn) => {
-        if (userId) setMessages((prev) => patchById(prev, userId, fn))
+        if (userId) patchSessionMessages(cid, (prev) => patchById(prev, userId, fn))
       }
       const steps = (op) => patchAssistant((m) => ({ ...m, steps: op(m.steps ?? []) }))
 
-      bufferRef.current = { id: assistantId, text: '', raf: 0 }
       let phase = entry.file ? 'upload' : 'ask'
       let gotFirst = false
 
@@ -479,7 +539,7 @@ export default function App() {
         // ---- A. Upload + index ----
         if (entry.file) {
           const file = entry.file
-          setAgentStatus('uploading')
+          setSessionStatus(cid, 'uploading')
           steps((s) => activateStep(s, STEP.UPLOAD, `Uploading ${file.name}`))
 
           const res = await uploadDocument(file, cid, {
@@ -490,7 +550,9 @@ export default function App() {
           })
 
           const targetDocId = res.document_id || res.doc_id
-          applyDoc(targetDocId, file.name)
+          if (currentChatIdRef.current === cid) {
+            applyDoc(targetDocId, file.name)
+          }
           attachDocumentToChat(cid, targetDocId).catch(() => {})
 
           const newDocObj = {
@@ -499,10 +561,15 @@ export default function App() {
             page_count: res.page_count || 1,
             status: res.status || 'ready',
           }
-          setAttachedDocs((prev) => {
-            if (prev.some((d) => d.doc_id === targetDocId)) return prev
-            return [...prev, newDocObj]
-          })
+
+          const existingDocs = attachedDocsByChatRef.current.get(cid) || []
+          const nextDocs = existingDocs.some((d) => d.doc_id === targetDocId)
+            ? existingDocs
+            : [...existingDocs, newDocObj]
+          attachedDocsByChatRef.current.set(cid, nextDocs)
+          if (currentChatIdRef.current === cid) {
+            setAttachedDocs(nextDocs)
+          }
           refreshAvailableDocs()
 
           setSessions(
@@ -518,7 +585,7 @@ export default function App() {
               details: { filename: file.name, sections: res.page_count || undefined },
             }))
           } else {
-            setAgentStatus('indexing')
+            setSessionStatus(cid, 'indexing')
             steps((s) => activateStep(s, STEP.INDEX, 'Constructing section tree index'))
             patchUser((m) => ({ ...m, file: { ...m.file, status: 'indexing' } }))
 
@@ -541,18 +608,21 @@ export default function App() {
             }))
           }
 
-          setAgentStatus('ready')
+          setSessionStatus(cid, 'ready')
           entry.file = null
           phase = 'ask'
         }
 
         // ---- B. Ask with real retrieval telemetry stages ----
-        const currentDocIds = attachedDocs.map((d) => d.doc_id)
+        const chatDocs =
+          attachedDocsByChatRef.current.get(cid) ||
+          (currentChatIdRef.current === cid ? attachedDocs : [])
+        const currentDocIds = chatDocs.map((d) => d.doc_id)
         if (docRef.current.id && !currentDocIds.includes(docRef.current.id)) {
           currentDocIds.push(docRef.current.id)
         }
 
-        setAgentStatus('retrieving')
+        setSessionStatus(cid, 'retrieving')
         // Progress through real retrieval stages
         steps((s) =>
           activateStep(
@@ -592,7 +662,7 @@ export default function App() {
           onStage: (stageInfo) => {
             if (stageInfo?.stage === 'retrieved' && !retrievalFinished) {
               retrievalFinished = true
-              setAgentStatus('generating')
+              setSessionStatus(cid, 'generating')
               const durationMs =
                 stageInfo.duration != null ? Math.round(stageInfo.duration * 1000) : undefined
               const nodesMatched = stageInfo.nodes != null ? stageInfo.nodes : undefined
@@ -640,7 +710,7 @@ export default function App() {
             if (!gotFirst) {
               gotFirst = true
               phase = 'stream'
-              setAgentStatus('streaming')
+              setSessionStatus(cid, 'streaming')
               patchAssistant((m) => ({
                 ...m,
                 status: 'streaming',
@@ -653,13 +723,21 @@ export default function App() {
                 ),
               }))
             }
-            const buf = bufferRef.current
+            let buf = sessionBuffersRef.current.get(cid)
+            if (!buf) {
+              buf = { text: '', raf: 0 }
+              sessionBuffersRef.current.set(cid, buf)
+            }
             buf.text += chunk
-            if (!buf.raf) buf.raf = requestAnimationFrame(flushNow)
+            if (!buf.raf) {
+              buf.raf = requestAnimationFrame(() => {
+                flushSessionBuffer(cid, assistantId)
+              })
+            }
           },
         })
 
-        flushNow()
+        flushSessionBuffer(cid, assistantId)
 
         patchAssistant((m) => {
           const finalDuration =
@@ -683,9 +761,22 @@ export default function App() {
           }),
         )
 
-        setAgentStatus(currentDocIds.length > 0 ? 'ready' : 'idle')
+        setSessionStatus(cid, currentDocIds.length > 0 ? 'ready' : 'idle')
+
+        // If completed in background while user was on another session, notify user!
+        if (currentChatIdRef.current !== cid) {
+          setUnreadSessionIds((prev) => new Set(prev).add(cid))
+          const currentSessions = sessionsRef.current || []
+          const found = currentSessions.find((s) => s.chatId === cid)
+          const sessionTitle = found?.title || entry.query?.slice(0, 30) || 'Research'
+          setCenterNotice({
+            id: crypto.randomUUID(),
+            chatId: cid,
+            title: sessionTitle,
+          })
+        }
       } catch (err) {
-        flushNow()
+        flushSessionBuffer(cid, assistantId)
         if (isAbort(err)) {
           patchAssistant((m) => ({
             ...m,
@@ -694,7 +785,7 @@ export default function App() {
               st.status === 'in_progress' ? { ...st, status: 'completed' } : st,
             ),
           }))
-          setAgentStatus(attachedDocs.length > 0 ? 'ready' : 'idle')
+          setSessionStatus(cid, 'idle')
           return
         }
 
@@ -706,18 +797,21 @@ export default function App() {
           error: msg,
           steps: failActive(m.steps ?? [], msg),
         }))
-        setAgentStatus('error')
+        setSessionStatus(cid, 'error')
         toast.error(msg)
       } finally {
-        streamAbortRef.current = null
+        sessionStreamsRef.current.delete(cid)
+        sessionBuffersRef.current.delete(cid)
       }
     },
     [
       applyDoc,
       attachedDocs,
-      flushNow,
+      flushSessionBuffer,
+      patchSessionMessages,
       pollDocumentUntilReady,
       refreshAvailableDocs,
+      setSessionStatus,
     ],
   )
 
@@ -849,7 +943,7 @@ export default function App() {
       await detachDocumentFromChat(chatId)
       applyDoc(null, null)
       setAttachedDocs([])
-      setAgentStatus('idle')
+      setSessionStatus(chatId, 'idle')
       setStructureExplorerOpen(false)
       setSessions(
         patchSession(chatId, {
@@ -908,7 +1002,6 @@ export default function App() {
   const handleSelectDocumentForChat = useCallback(
     async (targetDocId, targetDocName, initialPrompt) => {
       applyDoc(targetDocId, targetDocName)
-      setAgentStatus('ready')
       handleNavigate('chat')
 
       let cid = chatId
@@ -923,6 +1016,7 @@ export default function App() {
       }
 
       if (cid) {
+        setSessionStatus(cid, 'ready')
         attachDocumentToChat(cid, targetDocId).catch(() => {})
         setAttachedDocs((prev) => {
           if (prev.some((d) => d.doc_id === targetDocId)) return prev
@@ -968,6 +1062,8 @@ export default function App() {
       sessions={sessions}
       activeChatId={chatId}
       isStreaming={busy}
+      unreadSessionIds={unreadSessionIds}
+      sessionStatuses={sessionStatuses}
       onNewChat={handleNewChat}
       onSelectSession={handleSelectSession}
       onDeleteSession={handleDeleteSession}
@@ -1025,66 +1121,81 @@ export default function App() {
     ) : null
 
   return (
-    <ChatLayout
-      sidebar={sidebar}
-      structureExplorer={structureExplorerNode}
-      mobileSidebarOpen={mobileSidebarOpen}
-      onMobileSidebarOpenChange={setMobileSidebarOpen}
-      sidebarCollapsed={sidebarCollapsed}
-      onSidebarCollapsedChange={setSidebarCollapsed}
-    >
-      <div className="sr-only" role="status" aria-live="polite">
-        {AGENT_STATUS_TEXT[agentStatus]}
-      </div>
+    <>
+      <CenterNotification
+        notice={centerNotice}
+        onView={(targetChatId) => {
+          const s = sessionsRef.current.find((x) => x.chatId === targetChatId)
+          if (s) {
+            handleSelectSession(s)
+          } else {
+            handleSelectSession({ chatId: targetChatId, title: 'Research' })
+          }
+        }}
+        onDismiss={() => setCenterNotice(null)}
+      />
 
-      {currentView === 'documents' ? (
-        <DocumentLibrary
-          onSelectDocumentForChat={handleSelectDocumentForChat}
-          onOpenStructureExplorer={(doc) => {
-            applyDoc(doc.doc_id, doc.filename)
-            loadDocTree(doc.doc_id)
-            setStructureExplorerOpen(true)
-          }}
-        />
-      ) : currentView === 'knowledge' ? (
-        <KnowledgeMemoryView
-          onStartChatWithDoc={async (docId, filename) => {
-            await handleNewChat()
-            handleAttachDoc({ doc_id: docId, filename })
-            handleNavigate('chat')
-          }}
-          onAskAboutKnowledge={(seedText) => {
-            handleNavigate('chat')
-            setInput(
-              seedText
-                ? `Based on our collective knowledge: ${seedText}`
-                : 'Summarize the overarching insights in our knowledge base.',
-            )
-          }}
-        />
-      ) : (
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[#F7F6F1]">
-          {messages.length === 0 ? (
-            <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto p-4">
-              <EmptyState onPick={setInput} docName={docName || (attachedDocs[0]?.filename)} />
-              <ChatInput {...composerProps} isCentered={true} />
-            </div>
-          ) : (
-            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-              <MessageList
-                messages={messages}
-                busy={busy}
-                onRetry={handleRetry}
-                onSelectCitation={handleSelectCitation}
-              />
-
-              <div className="bg-gradient-to-t from-[#F7F6F1] via-[#F7F6F1]/95 to-transparent pt-2">
-                <ChatInput {...composerProps} isCentered={false} />
-              </div>
-            </div>
-          )}
+      <ChatLayout
+        sidebar={sidebar}
+        structureExplorer={structureExplorerNode}
+        mobileSidebarOpen={mobileSidebarOpen}
+        onMobileSidebarOpenChange={setMobileSidebarOpen}
+        sidebarCollapsed={sidebarCollapsed}
+        onSidebarCollapsedChange={setSidebarCollapsed}
+      >
+        <div className="sr-only" role="status" aria-live="polite">
+          {AGENT_STATUS_TEXT[agentStatus]}
         </div>
-      )}
-    </ChatLayout>
+
+        {currentView === 'documents' ? (
+          <DocumentLibrary
+            onSelectDocumentForChat={handleSelectDocumentForChat}
+            onOpenStructureExplorer={(doc) => {
+              applyDoc(doc.doc_id, doc.filename)
+              loadDocTree(doc.doc_id)
+              setStructureExplorerOpen(true)
+            }}
+          />
+        ) : currentView === 'knowledge' ? (
+          <KnowledgeMemoryView
+            onStartChatWithDoc={async (docId, filename) => {
+              await handleNewChat()
+              handleAttachDoc({ doc_id: docId, filename })
+              handleNavigate('chat')
+            }}
+            onAskAboutKnowledge={(seedText) => {
+              handleNavigate('chat')
+              setInput(
+                seedText
+                  ? `Based on our collective knowledge: ${seedText}`
+                  : 'Summarize the overarching insights in our knowledge base.',
+              )
+            }}
+          />
+        ) : (
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[#F7F6F1]">
+            {messages.length === 0 ? (
+              <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto p-4">
+                <EmptyState onPick={setInput} docName={docName || (attachedDocs[0]?.filename)} />
+                <ChatInput {...composerProps} isCentered={true} />
+              </div>
+            ) : (
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                <MessageList
+                  messages={messages}
+                  busy={busy}
+                  onRetry={handleRetry}
+                  onSelectCitation={handleSelectCitation}
+                />
+
+                <div className="bg-gradient-to-t from-[#F7F6F1] via-[#F7F6F1]/95 to-transparent pt-2">
+                  <ChatInput {...composerProps} isCentered={false} />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </ChatLayout>
+    </>
   )
 }
