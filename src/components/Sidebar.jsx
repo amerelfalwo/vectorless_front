@@ -129,7 +129,7 @@ export function Sidebar({
           }}
           className="flex items-center gap-2.5 text-left transition hover:opacity-90"
         >
-          <AtlasLogo className="h-8 w-8" showText={true} showTagline={true} />
+          <AtlasLogo className="h-9 w-9" showText={true} />
         </button>
 
         {onCloseSidebar ? (
