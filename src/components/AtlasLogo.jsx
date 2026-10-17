@@ -1,51 +1,25 @@
+import atlasIcon from '../assets/atlas_logo_icon.png'
 import { PRODUCT_CONFIG } from '../config/product.js'
 
 /**
  * Atlas Brand Emblem & Identity
- * Visual motif: Layered architectural document planes forming an 'A'
- * with a tree root/branch discovery node in forest green (#285943) and sage (#8DAA91).
+ * Visual motif: Compass rose, hierarchical tree branches, and open document folio forming an 'A'.
  */
 export function AtlasLogo({
-  className = 'h-6 w-6',
+  className = 'h-7 w-7',
   showText = false,
   showTagline = false,
 }) {
   return (
     <div className="flex items-center gap-2.5">
-      <svg
-        viewBox="0 0 32 32"
-        fill="none"
-        xmlns="http://www.w3.org/2000/svg"
-        className={className}
-        aria-hidden="true"
-      >
-        {/* Soft rounded container for the emblem */}
-        <rect width="32" height="32" rx="7" fill="#285943" />
-        
-        {/* Geometric 'A' forming an architectural arch & open folio */}
-        <path
-          d="M16 6.5L8.5 24H12.2L14 19.5H18L19.8 24H23.5L16 6.5Z"
-          fill="#F7F6F1"
+      <div className={`relative shrink-0 overflow-hidden rounded-lg border border-[#E4E5DE] bg-white p-0.5 shadow-2xs ${className} flex items-center justify-center`}>
+        <img
+          src={atlasIcon}
+          alt="Atlas Logo"
+          className="h-full w-full object-contain"
+          loading="eager"
         />
-        <path
-          d="M14.8 16.8H17.2L16 13.2L14.8 16.8Z"
-          fill="#285943"
-        />
-        
-        {/* Hierarchical knowledge node indicator (Muted Sage) */}
-        <circle cx="16" cy="10" r="1.6" fill="#8DAA91" />
-        
-        {/* Subtle base baseline supporting knowledge structure */}
-        <line
-          x1="11"
-          y1="25.5"
-          x2="21"
-          y2="25.5"
-          stroke="#8DAA91"
-          strokeWidth="1.2"
-          strokeLinecap="round"
-        />
-      </svg>
+      </div>
 
       {showText && (
         <div className="flex flex-col">

@@ -34,6 +34,15 @@ const EXAMPLE_PROMPTS = [
 export function EmptyState({ onPick, docName }) {
   return (
     <div className="flex w-full max-w-2xl flex-col items-center px-4 py-8 text-center animate-fadeIn">
+      {/* Brand Logo Emblem */}
+      <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl border border-[#E4E5DE] bg-white p-2 shadow-xs transition hover:scale-105">
+        <img
+          src="/atlas_logo_icon.png"
+          alt="Atlas Logo"
+          className="h-full w-full object-contain"
+        />
+      </div>
+
       {/* Active Document Badge or Category Tag */}
       {docName ? (
         <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-[#E4E5DE] bg-white px-3.5 py-1 text-xs text-[#262B27] shadow-xs">

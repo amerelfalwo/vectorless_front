@@ -154,9 +154,7 @@ const AssistantMessage = memo(function AssistantMessage({
       aria-label={`${PRODUCT_CONFIG.agentName || PRODUCT_CONFIG.name} response`}
     >
       {/* Brand Icon Marker */}
-      <div className="mt-0.5 flex h-7 w-7 shrink-0 select-none items-center justify-center rounded-lg border border-[#E4E5DE] bg-white p-1 shadow-2xs">
-        <AtlasLogo className="h-4 w-4" />
-      </div>
+      <AtlasLogo className="mt-0.5 h-7 w-7" />
 
       <div className="min-w-0 flex-1 space-y-2.5">
         {/* Agent Identity Header */}
