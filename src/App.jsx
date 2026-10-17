@@ -660,6 +660,30 @@ export default function App() {
           deep_analysis: Boolean(entry.deepAnalysis),
           signal,
           onStage: (stageInfo) => {
+            if (stageInfo?.stage === 'web_search') {
+              patchAssistant((m) => {
+                let currentSteps = m.steps ?? []
+                currentSteps = activateStep(
+                  currentSteps,
+                  STEP.RETRIEVE,
+                  'Searching live web via FastMCP...',
+                )
+                return { ...m, steps: currentSteps }
+              })
+            }
+            if (stageInfo?.stage === 'web_search_done') {
+              patchAssistant((m) => {
+                let currentSteps = m.steps ?? []
+                const resCount = stageInfo.results ?? 0
+                currentSteps = completeStep(
+                  currentSteps,
+                  STEP.RETRIEVE,
+                  undefined,
+                  `FastMCP: ${resCount} web sources found`,
+                )
+                return { ...m, steps: currentSteps }
+              })
+            }
             if (stageInfo?.stage === 'retrieved' && !retrievalFinished) {
               retrievalFinished = true
               setSessionStatus(cid, 'generating')
