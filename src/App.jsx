@@ -1032,47 +1032,40 @@ export default function App() {
     toast.success('Conversation renamed.')
   }, [])
 
-  // Start research from Document Library
+  // Start research from Document Library: always create a fresh chat session
   const handleSelectDocumentForChat = useCallback(
     async (targetDocId, targetDocName, initialPrompt) => {
+      setInput(initialPrompt || '')
+      setAttachedFile(null)
       applyDoc(targetDocId, targetDocName)
+      setAttachedDocs([{ doc_id: targetDocId, filename: targetDocName, status: 'ready' }])
+      setMessages([])
+      setStructureExplorerOpen(false)
       handleNavigate('chat')
 
-      let cid = chatId
-      if (!cid) {
-        try {
-          const { chat_id } = await createChat()
-          cid = chat_id
-          setChatId(chat_id)
-        } catch {
-          // fallback
-        }
-      }
-
-      if (cid) {
-        setSessionStatus(cid, 'ready')
-        attachDocumentToChat(cid, targetDocId).catch(() => {})
-        setAttachedDocs((prev) => {
-          if (prev.some((d) => d.doc_id === targetDocId)) return prev
-          return [...prev, { doc_id: targetDocId, filename: targetDocName, status: 'ready' }]
-        })
+      try {
+        const { chat_id } = await createChat()
+        setChatId(chat_id)
+        saveActiveChatId(chat_id)
+        setSessionStatus(chat_id, 'ready')
+        attachDocumentToChat(chat_id, targetDocId).catch(() => {})
         setSessions(
           upsertSession({
-            chatId: cid,
+            chatId: chat_id,
             docId: targetDocId,
             docName: targetDocName,
             title: `Research: ${targetDocName}`,
             updatedAt: Date.now(),
           }),
         )
+      } catch (err) {
+        console.error('Failed to create new chat session:', err)
+        toast.error('Failed to initialize research session.')
       }
 
-      if (initialPrompt) {
-        setInput(initialPrompt)
-      }
-      toast.success(`Attached "${targetDocName}" to research workspace.`)
+      toast.success(`Started new research session for "${targetDocName}".`)
     },
-    [applyDoc, chatId, handleNavigate],
+    [applyDoc, handleNavigate, setSessionStatus],
   )
 
   // Handle citation click: open structure explorer and focus section
