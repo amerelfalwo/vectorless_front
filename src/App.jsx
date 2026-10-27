@@ -958,16 +958,76 @@ export default function App() {
 
   const handleRetry = useCallback(
     (msgId) => {
-      const idx = messages.findIndex((m) => m.id === msgId)
+      let idx = messages.findIndex((m) => m.id === msgId)
       if (idx === -1) return
-      const prevUser = messages
-        .slice(0, idx)
-        .reverse()
-        .find((m) => m.role === 'user')
-      if (!prevUser) return
-      handleSend(prevUser.content)
+
+      // Find the user message associated with this assistant message
+      let prevUserIdx = -1
+      for (let i = idx - 1; i >= 0; i--) {
+        if (messages[i].role === 'user') {
+          prevUserIdx = i
+          break
+        }
+      }
+      if (prevUserIdx === -1) return
+      const prevUser = messages[prevUserIdx]
+
+      // If this message was already a duplicate retry of an earlier failed turn with the same query,
+      // collapse duplicate bubbles back to the first instance to keep chat clean and in-place
+      let targetUserIdx = prevUserIdx
+      let targetAssistantId = msgId
+      for (let i = prevUserIdx - 2; i >= 0; i -= 2) {
+        if (
+          messages[i]?.role === 'user' &&
+          messages[i].content === prevUser.content &&
+          messages[i + 1]?.role === 'assistant'
+        ) {
+          targetUserIdx = i
+          targetAssistantId = messages[i + 1].id
+        } else {
+          break
+        }
+      }
+
+      // Abort any active stream for this chat
+      const existing = sessionStreamsRef.current.get(chatId)
+      if (existing) {
+        existing.abort()
+        sessionStreamsRef.current.delete(chatId)
+      }
+
+      // Reset the assistant bubble in place and prune duplicate trailing retries
+      const resetAssistant = {
+        id: targetAssistantId,
+        role: 'assistant',
+        content: '',
+        status: 'pending',
+        error: null,
+        citations: [],
+        steps: createSteps(false),
+        createdAt: Date.now(),
+      }
+
+      const nextMessages = [
+        ...messages.slice(0, targetUserIdx + 1),
+        resetAssistant,
+      ]
+
+      setMessages(nextMessages)
+      saveChatMessages(chatId, nextMessages)
+
+      processTurn({
+        assistantId: targetAssistantId,
+        userId: messages[targetUserIdx].id,
+        entry: {
+          query: prevUser.content,
+          file: null,
+          deepAnalysis: Boolean(messages[idx]?.details?.deepAnalysis),
+        },
+        chatId,
+      })
     },
-    [handleSend, messages],
+    [chatId, messages, processTurn],
   )
 
   // Detach all documents
