@@ -362,3 +362,30 @@ export async function streamAsk({
     reader.releaseLock?.()
   }
 }
+
+/**
+ * Fetch mind map graph structure for a document.
+ * @param {string} docId
+ * @param {{ signal?: AbortSignal }} [opts]
+ * @returns {Promise<{ doc_id: string, filename: string, nodes: Array<any>, edges: Array<any>, metadata: any }>}
+ */
+export async function fetchMindMap(docId, opts = {}) {
+  const { data } = await api.get(`/studio/${encodeURIComponent(docId)}/mindmap`, {
+    signal: opts.signal,
+  })
+  return data
+}
+
+/**
+ * Generate 5 MCQs and 5 Flashcards with exact citations for a document.
+ * @param {string} docId
+ * @param {object} [payload]
+ * @param {{ signal?: AbortSignal }} [opts]
+ * @returns {Promise<{ doc_id: string, filename: string, mcqs: Array<any>, flashcards: Array<any>, generated_at: number }>}
+ */
+export async function generateQuiz(docId, payload = {}, opts = {}) {
+  const { data } = await api.post(`/studio/${encodeURIComponent(docId)}/quiz`, payload, {
+    signal: opts.signal,
+  })
+  return data
+}

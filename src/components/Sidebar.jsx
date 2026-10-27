@@ -12,6 +12,7 @@ import {
   PanelLeftClose,
   Brain,
   Loader2,
+  GraduationCap,
 } from 'lucide-react'
 
 import { AtlasLogo } from './AtlasLogo.jsx'
@@ -196,6 +197,24 @@ export function Sidebar({
             <span className="font-medium">Collective Knowledge</span>
           </div>
           {currentView === 'knowledge' && (
+            <span className="h-1.5 w-1.5 rounded-full bg-[#285943]" />
+          )}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onNavigate?.('studio')}
+          className={`flex items-center justify-between rounded-xl px-3 py-2 text-xs font-medium transition ${
+            currentView === 'studio'
+              ? 'bg-[#E8F0E8] text-[#285943]'
+              : 'text-[#777D76] hover:bg-[#F7F6F1] hover:text-[#262B27]'
+          }`}
+        >
+          <div className="flex items-center gap-2.5">
+            <GraduationCap className="h-4 w-4 shrink-0 text-[#285943]" />
+            <span className="font-medium">Study Studio</span>
+          </div>
+          {currentView === 'studio' && (
             <span className="h-1.5 w-1.5 rounded-full bg-[#285943]" />
           )}
         </button>

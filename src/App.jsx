@@ -25,6 +25,7 @@ import { Sidebar } from './components/Sidebar.jsx'
 import { DocumentLibrary } from './components/DocumentLibrary.jsx'
 import { DocumentStructureExplorer } from './components/DocumentStructureExplorer.jsx'
 import { KnowledgeMemoryView } from './components/KnowledgeMemoryView.jsx'
+import { StudyStudioView } from './components/StudyStudioView.jsx'
 import { CenterNotification } from './components/CenterNotification.jsx'
 import {
   loadSessions,
@@ -100,6 +101,7 @@ export default function App() {
     const p = window.location.pathname
     if (p.startsWith('/documents')) return 'documents'
     if (p.startsWith('/knowledge')) return 'knowledge'
+    if (p.startsWith('/studio')) return 'studio'
     return 'chat'
   })
 
@@ -197,7 +199,13 @@ export default function App() {
   const handleNavigate = useCallback((view) => {
     setCurrentView(view)
     const targetPath =
-      view === 'documents' ? '/documents' : view === 'knowledge' ? '/knowledge' : '/'
+      view === 'documents'
+        ? '/documents'
+        : view === 'knowledge'
+        ? '/knowledge'
+        : view === 'studio'
+        ? '/studio'
+        : '/'
     if (window.location.pathname !== targetPath) {
       window.history.pushState(null, '', targetPath)
     }
@@ -211,6 +219,8 @@ export default function App() {
         ? 'documents'
         : p.startsWith('/knowledge')
         ? 'knowledge'
+        : p.startsWith('/studio')
+        ? 'studio'
         : 'chat'
       setCurrentView(view)
     }
@@ -1194,6 +1204,32 @@ export default function App() {
                   ? `Based on our collective knowledge: ${seedText}`
                   : 'Summarize the overarching insights in our knowledge base.',
               )
+            }}
+          />
+        ) : currentView === 'studio' ? (
+          <StudyStudioView
+            docId={docId || attachedDocs[0]?.doc_id}
+            availableDocs={availableDocs}
+            onSelectDoc={(id) => {
+              const matchingDoc = availableDocs.find((d) => d.doc_id === id)
+              applyDoc(id, matchingDoc?.filename || 'Document')
+              loadDocTree(id)
+            }}
+            onJumpToSection={(targetDocId, sectionTitle, pageNumber, targetNodeId) => {
+              const activeId = targetDocId || docRef.current.id || attachedDocs[0]?.doc_id
+              if (activeId) {
+                const matchingDoc = availableDocs.find((d) => d.doc_id === activeId)
+                applyDoc(activeId, matchingDoc?.filename || 'Document')
+                loadDocTree(activeId)
+              }
+              if (targetNodeId) {
+                setActiveTreeNodeId(targetNodeId)
+              }
+              setStructureExplorerOpen(true)
+            }}
+            onAskAboutConcept={(concept) => {
+              handleNavigate('chat')
+              setInput(`Explain the core concept "${concept}" and cite its principles from the document.`)
             }}
           />
         ) : (
