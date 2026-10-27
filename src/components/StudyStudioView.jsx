@@ -21,6 +21,8 @@ import {
   Check,
   RotateCw,
   FileText,
+  Copy,
+  X,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { fetchMindMap, generateQuiz, listDocuments } from '../api/client.js'
@@ -36,6 +38,26 @@ function parseCitation(citationStr) {
     section: secMatch ? secMatch[1].trim() : 'Document Section',
     page: pageMatch ? parseInt(pageMatch[1], 10) : 1,
   }
+}
+
+/**
+ * Extract verbatim document excerpt from evidence_text or matched mindmap node text
+ */
+function getExcerptForCitation(citationStr, evidenceText, mindmapNodes = []) {
+  if (evidenceText && evidenceText.trim().length > 0) return evidenceText.trim()
+  if (!citationStr) return null
+  const parsed = parseCitation(citationStr)
+  if (!parsed.section && !parsed.page) return null
+  const cleanSec = (parsed.section || '').toLowerCase().trim()
+  const matched = (mindmapNodes || []).find((n) => {
+    const titleMatch =
+      cleanSec &&
+      ((n.section_title && n.section_title.toLowerCase().includes(cleanSec)) ||
+        (n.label && n.label.toLowerCase().includes(cleanSec)))
+    const pageMatch = n.page_number === parsed.page
+    return titleMatch || (pageMatch && n.text)
+  })
+  return matched?.text || matched?.summary || null
 }
 
 export function StudyStudioView({
@@ -213,78 +235,8 @@ export function StudyStudioView({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-1 flex-col bg-[#FCFCFA] text-[#262B27]">
-      {/* 1. Studio Header */}
-      <header className="flex flex-wrap items-center justify-between gap-4 border-b border-[#E4E5DE] bg-white px-6 py-4 shadow-xs">
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#285943] text-white shadow-xs">
-            <GraduationCap className="h-5 w-5" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-base font-semibold text-[#262B27]">Study Studio</h1>
-              <span className="rounded-full bg-[#E8F0E8] px-2 py-0.5 text-[11px] font-medium text-[#285943]">
-                NotebookLM Mode
-              </span>
-            </div>
-            <p className="text-xs text-[#777D76]">
-              Vectorless Knowledge Graph, Structural Mind Map & Grounded Study Quizzes
-            </p>
-          </div>
-        </div>
-
-        {/* Document Selector & Mode Tabs */}
-        <div className="flex items-center gap-3">
-          {effectiveDocs.length > 1 && (
-            <div className="relative">
-              <select
-                value={selectedDocId || ''}
-                onChange={(e) => {
-                  setSelectedDocId(e.target.value)
-                  onSelectDoc?.(e.target.value)
-                }}
-                className="appearance-none rounded-xl border border-[#E4E5DE] bg-[#F7F6F1] px-3.5 py-1.5 pr-8 text-xs font-medium text-[#262B27] hover:bg-[#EFEFEA] focus:outline-none focus:ring-1 focus:ring-[#285943]"
-              >
-                {effectiveDocs.map((doc) => (
-                  <option key={doc.doc_id} value={doc.doc_id}>
-                    📄 {doc.filename}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          {/* Mode Pill Toggle */}
-          <div className="flex items-center rounded-xl border border-[#E4E5DE] bg-[#F7F6F1] p-1 shadow-xs">
-            <button
-              type="button"
-              onClick={() => setActiveTab('mindmap')}
-              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition ${
-                activeTab === 'mindmap'
-                  ? 'bg-white text-[#285943] shadow-xs'
-                  : 'text-[#777D76] hover:text-[#262B27]'
-              }`}
-            >
-              <Network className="h-3.5 w-3.5" />
-              <span>Interactive Mind Map</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab('quiz')}
-              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition ${
-                activeTab === 'quiz'
-                  ? 'bg-white text-[#285943] shadow-xs'
-                  : 'text-[#777D76] hover:text-[#262B27]'
-              }`}
-            >
-              <Sparkles className="h-3.5 w-3.5" />
-              <span>Quizzes & Flashcards</span>
-            </button>
-          </div>
-        </div>
-      </header>
-
-      {/* 2. Main Studio View Content */}
+    <div className="flex h-full min-h-0 flex-1 flex-col bg-[#FCFCFA] text-[#262B27] relative">
+      {/* Main Studio View Content */}
       <div className="flex min-h-0 flex-1 overflow-hidden">
         {activeTab === 'mindmap' ? (
           /* ─────────────────────────────────────────────────────────────
@@ -293,46 +245,98 @@ export function StudyStudioView({
           <div className="flex flex-1 min-h-0 relative overflow-hidden">
             {/* Visual Canvas Area */}
             <div className="flex flex-1 flex-col overflow-auto p-8 bg-[#FAF9F5] relative select-none">
-              {/* Toolbar Controls */}
-              <div className="absolute top-4 left-6 z-10 flex items-center gap-2 rounded-xl border border-[#E4E5DE] bg-white/90 backdrop-blur-xs p-1.5 shadow-sm">
-                <div className="relative flex items-center">
-                  <Search className="absolute left-2.5 h-3.5 w-3.5 text-[#777D76]" />
-                  <input
-                    type="text"
-                    value={searchFilter}
-                    onChange={(e) => setSearchFilter(e.target.value)}
-                    placeholder="Search graph nodes..."
-                    className="w-44 rounded-lg bg-[#F7F6F1] pl-8 pr-2.5 py-1 text-xs text-[#262B27] placeholder-[#A4A9A2] focus:outline-none"
-                  />
+              {/* Floating Top Controls (Search, Zoom, Doc Selector & Mode Toggle) */}
+              <div className="absolute top-4 left-6 right-6 z-10 flex items-center justify-between pointer-events-none gap-4">
+                {/* Left Floating Controls: Search & Zoom */}
+                <div className="pointer-events-auto flex items-center gap-2 rounded-xl border border-[#E4E5DE] bg-white/95 backdrop-blur-xs p-1.5 shadow-sm">
+                  <div className="relative flex items-center">
+                    <Search className="absolute left-2.5 h-3.5 w-3.5 text-[#777D76]" />
+                    <input
+                      type="text"
+                      value={searchFilter}
+                      onChange={(e) => setSearchFilter(e.target.value)}
+                      placeholder="Search graph nodes..."
+                      className="w-44 rounded-lg bg-[#F7F6F1] pl-8 pr-2.5 py-1 text-xs text-[#262B27] placeholder-[#A4A9A2] focus:outline-none"
+                    />
+                  </div>
+                  <div className="h-4 w-[1px] bg-[#E4E5DE]" />
+                  <button
+                    type="button"
+                    onClick={() => setZoomLevel((z) => Math.min(1.5, z + 0.1))}
+                    title="Zoom In"
+                    className="rounded-lg p-1.5 text-[#777D76] hover:bg-[#F7F6F1] hover:text-[#262B27]"
+                  >
+                    <ZoomIn className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setZoomLevel((z) => Math.max(0.7, z - 0.1))}
+                    title="Zoom Out"
+                    className="rounded-lg p-1.5 text-[#777D76] hover:bg-[#F7F6F1] hover:text-[#262B27]"
+                  >
+                    <ZoomOut className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setZoomLevel(1.0)
+                      setSearchFilter('')
+                    }}
+                    title="Reset View"
+                    className="rounded-lg p-1.5 text-[#777D76] hover:bg-[#F7F6F1] hover:text-[#262B27]"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                  </button>
                 </div>
-                <div className="h-4 w-[1px] bg-[#E4E5DE]" />
-                <button
-                  type="button"
-                  onClick={() => setZoomLevel((z) => Math.min(1.5, z + 0.1))}
-                  title="Zoom In"
-                  className="rounded-lg p-1.5 text-[#777D76] hover:bg-[#F7F6F1] hover:text-[#262B27]"
-                >
-                  <ZoomIn className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setZoomLevel((z) => Math.max(0.7, z - 0.1))}
-                  title="Zoom Out"
-                  className="rounded-lg p-1.5 text-[#777D76] hover:bg-[#F7F6F1] hover:text-[#262B27]"
-                >
-                  <ZoomOut className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setZoomLevel(1.0)
-                    setSearchFilter('')
-                  }}
-                  title="Reset View"
-                  className="rounded-lg p-1.5 text-[#777D76] hover:bg-[#F7F6F1] hover:text-[#262B27]"
-                >
-                  <RotateCcw className="h-3.5 w-3.5" />
-                </button>
+
+                {/* Right Floating Controls: Doc Dropdown & Mode Pill */}
+                <div className="pointer-events-auto flex items-center gap-2.5">
+                  {effectiveDocs.length > 0 && (
+                    <div className="relative">
+                      <select
+                        value={selectedDocId || ''}
+                        onChange={(e) => {
+                          setSelectedDocId(e.target.value)
+                          onSelectDoc?.(e.target.value)
+                        }}
+                        className="appearance-none rounded-xl border border-[#E4E5DE] bg-white/95 backdrop-blur-xs px-3.5 py-1.5 pr-8 text-xs font-medium text-[#262B27] shadow-sm hover:bg-[#F7F6F1] focus:outline-none focus:ring-1 focus:ring-[#285943]"
+                      >
+                        {effectiveDocs.map((doc) => (
+                          <option key={doc.doc_id} value={doc.doc_id}>
+                            📄 {doc.filename}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  <div className="flex items-center rounded-xl border border-[#E4E5DE] bg-white/95 backdrop-blur-xs p-1 shadow-sm">
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('mindmap')}
+                      className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+                        activeTab === 'mindmap'
+                          ? 'bg-[#285943] text-white shadow-xs'
+                          : 'text-[#777D76] hover:text-[#262B27]'
+                      }`}
+                    >
+                      <Network className="h-3.5 w-3.5" />
+                      <span>Interactive Mind Map</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('quiz')}
+                      className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+                        activeTab === 'quiz'
+                          ? 'bg-[#285943] text-white shadow-xs'
+                          : 'text-[#777D76] hover:text-[#262B27]'
+                      }`}
+                    >
+                      <Sparkles className="h-3.5 w-3.5" />
+                      <span>Quizzes & Flashcards</span>
+                    </button>
+                  </div>
+                </div>
               </div>
 
               {loadingMindmap ? (
@@ -446,29 +450,56 @@ export function StudyStudioView({
 
             {/* Node Inspector Drawer */}
             {selectedGraphNode && (
-              <aside className="w-80 border-l border-[#E4E5DE] bg-white p-5 flex flex-col justify-between shadow-xs">
-                <div>
+              <aside className="w-96 border-l border-[#E4E5DE] bg-white p-5 flex flex-col justify-between shadow-xs z-20">
+                <div className="flex flex-col min-h-0">
                   <div className="flex items-center justify-between border-b border-[#E4E5DE] pb-3">
-                    <span className="rounded-full bg-[#E8F0E8] px-2.5 py-0.5 text-[11px] font-semibold text-[#285943]">
-                      {selectedGraphNode.type.toUpperCase()}
-                    </span>
-                    <span className="rounded bg-[#F7F6F1] border border-[#E4E5DE] px-2 py-0.5 text-xs font-mono font-medium text-[#777D76]">
-                      Page {selectedGraphNode.page_number}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="rounded-full bg-[#E8F0E8] px-2.5 py-0.5 text-[11px] font-semibold text-[#285943]">
+                        {selectedGraphNode.type.toUpperCase()}
+                      </span>
+                      <span className="rounded bg-[#F7F6F1] border border-[#E4E5DE] px-2 py-0.5 text-xs font-mono font-medium text-[#777D76]">
+                        Page {selectedGraphNode.page_number}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedGraphNode(null)}
+                      className="rounded-lg p-1 text-[#777D76] hover:bg-[#F7F6F1] hover:text-[#262B27] transition"
+                      title="Close drawer"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
                   </div>
 
                   <h3 className="mt-3 text-sm font-bold text-[#262B27] leading-snug">
                     {selectedGraphNode.section_title || selectedGraphNode.label}
                   </h3>
 
-                  <div className="mt-4 rounded-xl bg-[#F7F6F1] p-3 text-xs leading-relaxed text-[#5A6059]">
-                    <div className="font-semibold text-[#262B27] mb-1 flex items-center gap-1.5">
-                      <FileText className="h-3.5 w-3.5 text-[#285943]" />
-                      Section Summary
+                  {/* Real Document Text / Note content from File */}
+                  <div className="mt-4 flex flex-col rounded-xl border border-[#E4E5DE] bg-[#FAF9F5] p-3.5 text-xs">
+                    <div className="flex items-center justify-between font-semibold text-[#262B27] mb-2">
+                      <div className="flex items-center gap-1.5">
+                        <FileText className="h-3.5 w-3.5 text-[#285943]" />
+                        <span>نص المقطع من الملف (Document Text)</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const text = selectedGraphNode.text || selectedGraphNode.summary || ''
+                          navigator.clipboard.writeText(text)
+                          toast.success('تم نسخ النص من الملف!')
+                        }}
+                        className="flex items-center gap-1 text-[11px] text-[#777D76] hover:text-[#285943] transition"
+                        title="Copy text"
+                      >
+                        <Copy className="h-3 w-3" />
+                        <span>نسخ</span>
+                      </button>
                     </div>
-                    <p className="line-clamp-6">
-                      {selectedGraphNode.summary || 'No detailed preview available.'}
-                    </p>
+
+                    <div className="max-h-64 overflow-y-auto rounded-lg bg-white p-3 border border-[#EBEBE6] text-xs leading-relaxed text-[#333834] whitespace-pre-wrap font-sans selection:bg-[#E8F0E8]">
+                      {selectedGraphNode.text || selectedGraphNode.summary || 'لا يوجد نص متاح لهذا المقطع.'}
+                    </div>
                   </div>
                 </div>
 
@@ -512,32 +543,74 @@ export function StudyStudioView({
              TAB B: QUIZZES & FLASHCARDS
              ───────────────────────────────────────────────────────────── */
           <div className="flex flex-1 min-h-0 flex-col overflow-auto bg-[#FCFCFA] p-6">
-            {/* Top Sub-Navigation for Quiz */}
-            <div className="flex items-center justify-between border-b border-[#E4E5DE] pb-4 mb-6">
+            {/* Top Bar for Quiz */}
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#E4E5DE] pb-4 mb-6">
+              <div className="flex items-center gap-3">
+                {/* Mode Pill Toggle */}
+                <div className="flex items-center rounded-xl border border-[#E4E5DE] bg-white p-1 shadow-xs">
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('mindmap')}
+                    className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-[#777D76] hover:text-[#262B27] transition"
+                  >
+                    <Network className="h-3.5 w-3.5" />
+                    <span>Mind Map</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('quiz')}
+                    className="flex items-center gap-1.5 rounded-lg bg-[#285943] px-3 py-1.5 text-xs font-medium text-white shadow-xs transition"
+                  >
+                    <Sparkles className="h-3.5 w-3.5" />
+                    <span>Quizzes & Flashcards</span>
+                  </button>
+                </div>
+
+                {effectiveDocs.length > 0 && (
+                  <div className="relative">
+                    <select
+                      value={selectedDocId || ''}
+                      onChange={(e) => {
+                        setSelectedDocId(e.target.value)
+                        onSelectDoc?.(e.target.value)
+                      }}
+                      className="appearance-none rounded-xl border border-[#E4E5DE] bg-white px-3.5 py-1.5 pr-8 text-xs font-medium text-[#262B27] shadow-xs hover:bg-[#F7F6F1] focus:outline-none focus:ring-1 focus:ring-[#285943]"
+                    >
+                      {effectiveDocs.map((doc) => (
+                        <option key={doc.doc_id} value={doc.doc_id}>
+                          📄 {doc.filename}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
+
+              {/* Sub-mode selector (MCQs vs Flashcards) */}
               <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={() => setQuizMode('mcq')}
-                  className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-medium transition ${
+                  className={`flex items-center gap-2 rounded-xl px-3.5 py-1.5 text-xs font-medium transition ${
                     quizMode === 'mcq'
                       ? 'bg-[#285943] text-white shadow-xs'
                       : 'bg-white border border-[#E4E5DE] text-[#777D76] hover:text-[#262B27]'
                   }`}
                 >
                   <HelpCircle className="h-4 w-4" />
-                  <span>5 Multiple Choice Questions</span>
+                  <span>5 Multiple Choice</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => setQuizMode('flashcards')}
-                  className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-medium transition ${
+                  className={`flex items-center gap-2 rounded-xl px-3.5 py-1.5 text-xs font-medium transition ${
                     quizMode === 'flashcards'
                       ? 'bg-[#285943] text-white shadow-xs'
                       : 'bg-white border border-[#E4E5DE] text-[#777D76] hover:text-[#262B27]'
                   }`}
                 >
                   <Layers className="h-4 w-4" />
-                  <span>5 Active-Recall Flashcards</span>
+                  <span>5 Flashcards</span>
                 </button>
               </div>
 
@@ -627,7 +700,7 @@ export function StudyStudioView({
                           })}
                         </div>
 
-                        {/* Explanation & Clickable Green Citation Badge */}
+                        {/* Explanation & Real Document Text (نص الملف) */}
                         {isAnswered && (
                           <div className="mt-6 rounded-xl bg-[#F7F6F1] p-4 text-xs leading-relaxed border border-[#E4E5DE]">
                             <div className="flex items-center gap-1.5 font-semibold text-[#262B27] mb-1">
@@ -635,6 +708,41 @@ export function StudyStudioView({
                               <span>Explanation & Evidence</span>
                             </div>
                             <p className="text-[#5A6059] mb-3">{currentMcq.explanation}</p>
+
+                            {/* Real Document Text / Evidence from File */}
+                            {(() => {
+                              const excerpt = getExcerptForCitation(
+                                currentMcq.citation,
+                                currentMcq.evidence_text,
+                                mindmapData?.nodes || []
+                              )
+                              if (!excerpt) return null
+                              return (
+                                <div className="mb-3 rounded-lg border border-emerald-300 bg-emerald-50/80 p-3 text-xs">
+                                  <div className="flex items-center justify-between mb-1.5">
+                                    <div className="flex items-center gap-1.5 font-bold text-emerald-900">
+                                      <FileText className="h-3.5 w-3.5 text-emerald-700" />
+                                      <span>نص الملف الأصلي (Document Excerpt):</span>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        navigator.clipboard.writeText(excerpt)
+                                        toast.success('تم نسخ نص الملف!')
+                                      }}
+                                      className="flex items-center gap-1 text-[11px] text-emerald-800 hover:text-emerald-950 transition"
+                                      title="Copy document excerpt"
+                                    >
+                                      <Copy className="h-3 w-3" />
+                                      <span>نسخ النص</span>
+                                    </button>
+                                  </div>
+                                  <p className="max-h-48 overflow-y-auto whitespace-pre-wrap font-serif text-emerald-950 italic leading-relaxed text-xs selection:bg-emerald-200">
+                                    "{excerpt}"
+                                  </p>
+                                </div>
+                              )
+                            })()}
 
                             {/* Clickable Citation Badge */}
                             {currentMcq.citation && (
@@ -747,6 +855,25 @@ export function StudyStudioView({
                                 <p className="text-xs text-[#5A6059] leading-relaxed">
                                   {card.explanation}
                                 </p>
+                                {(() => {
+                                  const excerpt = getExcerptForCitation(
+                                    card.citation,
+                                    card.evidence_text,
+                                    mindmapData?.nodes || []
+                                  )
+                                  if (!excerpt) return null
+                                  return (
+                                    <div className="mt-1 rounded-lg border border-emerald-300 bg-emerald-50/75 p-2.5 text-xs text-left">
+                                      <div className="flex items-center gap-1.5 font-bold text-emerald-900 mb-1">
+                                        <FileText className="h-3 w-3 text-emerald-700" />
+                                        <span>نص الملف (Document Excerpt):</span>
+                                      </div>
+                                      <p className="max-h-36 overflow-y-auto whitespace-pre-wrap font-serif text-emerald-950 italic leading-relaxed text-xs">
+                                        "{excerpt}"
+                                      </p>
+                                    </div>
+                                  )
+                                })()}
                               </div>
                             )}
                           </div>
