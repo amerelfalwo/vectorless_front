@@ -246,7 +246,7 @@ export default function App() {
 
   useEffect(() => {
     refreshAvailableDocs()
-  }, [refreshAvailableDocs])
+  }, [currentView, refreshAvailableDocs])
 
   // Load tree whenever docId changes and explorer is opened
   const loadDocTree = useCallback(async (id) => {

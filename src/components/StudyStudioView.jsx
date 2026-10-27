@@ -23,7 +23,7 @@ import {
   FileText,
 } from 'lucide-react'
 import { toast } from 'sonner'
-import { fetchMindMap, generateQuiz } from '../api/client.js'
+import { fetchMindMap, generateQuiz, listDocuments } from '../api/client.js'
 
 /**
  * Utility to parse citation strings like '(Section: "Title", Page: 3)' into { section, page }
@@ -45,7 +45,28 @@ export function StudyStudioView({
   onJumpToSection,
   onAskAboutConcept,
 }) {
-  const [selectedDocId, setSelectedDocId] = useState(docId || availableDocs[0]?.doc_id || null)
+  const [internalDocs, setInternalDocs] = useState([])
+
+  // Self-heal: fetch ready documents directly on mount or when availableDocs is empty
+  useEffect(() => {
+    let active = true
+    listDocuments()
+      .then((res) => {
+        if (!active) return
+        const ready = (res.documents || []).filter((d) => d.status === 'ready')
+        setInternalDocs(ready)
+      })
+      .catch((err) => console.warn('StudyStudioView listDocuments error:', err))
+    return () => {
+      active = false
+    }
+  }, [])
+
+  const effectiveDocs = useMemo(() => {
+    return availableDocs && availableDocs.length > 0 ? availableDocs : internalDocs
+  }, [availableDocs, internalDocs])
+
+  const [selectedDocId, setSelectedDocId] = useState(docId || effectiveDocs[0]?.doc_id || null)
   const [activeTab, setActiveTab] = useState('mindmap') // 'mindmap' | 'quiz'
 
   // Mind map state
@@ -69,14 +90,14 @@ export function StudyStudioView({
   useEffect(() => {
     if (docId) {
       setSelectedDocId(docId)
-    } else if (!selectedDocId && availableDocs.length > 0) {
-      setSelectedDocId(availableDocs[0].doc_id)
+    } else if (!selectedDocId && effectiveDocs.length > 0) {
+      setSelectedDocId(effectiveDocs[0].doc_id)
     }
-  }, [docId, availableDocs])
+  }, [docId, effectiveDocs, selectedDocId])
 
   const currentDoc = useMemo(() => {
-    return availableDocs.find((d) => d.doc_id === selectedDocId) || null
-  }, [availableDocs, selectedDocId])
+    return effectiveDocs.find((d) => d.doc_id === selectedDocId) || null
+  }, [effectiveDocs, selectedDocId])
 
   // Load Mind Map
   const loadMindmap = useCallback(async (id) => {
@@ -176,7 +197,7 @@ export function StudyStudioView({
     }
   }
 
-  if (!availableDocs || availableDocs.length === 0) {
+  if (!effectiveDocs || effectiveDocs.length === 0) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center p-8 text-center bg-[#FCFCFA]">
         <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-[#E8F0E8] text-[#285943] mb-4 shadow-sm">
@@ -214,7 +235,7 @@ export function StudyStudioView({
 
         {/* Document Selector & Mode Tabs */}
         <div className="flex items-center gap-3">
-          {availableDocs.length > 1 && (
+          {effectiveDocs.length > 1 && (
             <div className="relative">
               <select
                 value={selectedDocId || ''}
@@ -224,7 +245,7 @@ export function StudyStudioView({
                 }}
                 className="appearance-none rounded-xl border border-[#E4E5DE] bg-[#F7F6F1] px-3.5 py-1.5 pr-8 text-xs font-medium text-[#262B27] hover:bg-[#EFEFEA] focus:outline-none focus:ring-1 focus:ring-[#285943]"
               >
-                {availableDocs.map((doc) => (
+                {effectiveDocs.map((doc) => (
                   <option key={doc.doc_id} value={doc.doc_id}>
                     📄 {doc.filename}
                   </option>
