@@ -178,7 +178,10 @@ const AssistantMessage = memo(function AssistantMessage({
             <StreamingLabel
               label={(() => {
                 const active = steps?.find((s) => s.status === 'active')
-                return active ? stepLabel(active) : 'Analyzing document hierarchy'
+                if (active) return stepLabel(active)
+                const pending = steps?.find((s) => s.status === 'pending')
+                if (pending) return stepLabel({ ...pending, status: 'active' })
+                return 'Thinking...'
               })()}
             />
           </div>
@@ -215,8 +218,8 @@ const AssistantMessage = memo(function AssistantMessage({
           <SourceList sources={sources} onSelectSource={onSelectCitation} />
         ) : null}
 
-        {/* Research Activity Accordion */}
-        {!hasHistoryOnly ? (
+        {/* Research Activity Accordion: only shown for document analysis or multi-step research */}
+        {!hasHistoryOnly && steps?.length > 2 ? (
           <AgentActivity
             steps={steps}
             status={status}
