@@ -112,19 +112,29 @@ export default function App() {
 
   const [sessions, setSessions] = useState(() => loadSessions())
   const [chatId, setChatId] = useState(() => {
-    const active = loadActiveChatId()
-    const all = loadSessions()
-    if (active && all.some((s) => s.chatId === active)) {
-      return active
+    try {
+      const searchParams = new URLSearchParams(window.location.search)
+      const urlChatId = searchParams.get('chat')
+      if (urlChatId) {
+        const all = loadSessions()
+        if (all.some((s) => s.chatId === urlChatId)) {
+          return urlChatId
+        }
+      }
+    } catch {
+      // ignore
     }
-    return all.length > 0 ? all[0].chatId : null
+    return null
   })
   const [messages, setMessages] = useState(() => {
-    const active = loadActiveChatId()
-    const all = loadSessions()
-    const targetId = active && all.some((s) => s.chatId === active) ? active : all[0]?.chatId
-    if (targetId) {
-      return loadChatMessages(targetId)
+    try {
+      const searchParams = new URLSearchParams(window.location.search)
+      const urlChatId = searchParams.get('chat')
+      if (urlChatId) {
+        return loadChatMessages(urlChatId)
+      }
+    } catch {
+      // ignore
     }
     return []
   })
@@ -196,9 +206,9 @@ export default function App() {
   }, [chatId, messages])
 
   // Synchronize browser history and route navigation
-  const handleNavigate = useCallback((view) => {
+  const handleNavigate = useCallback((view, targetChatId = null) => {
     setCurrentView(view)
-    const targetPath =
+    let targetPath =
       view === 'documents'
         ? '/documents'
         : view === 'knowledge'
@@ -206,26 +216,39 @@ export default function App() {
         : view === 'studio'
         ? '/studio'
         : '/'
-    if (window.location.pathname !== targetPath) {
+    if (view === 'chat' && targetChatId) {
+      targetPath = `/?chat=${encodeURIComponent(targetChatId)}`
+    }
+    const currentFull = window.location.pathname + window.location.search
+    if (currentFull !== targetPath) {
       window.history.pushState(null, '', targetPath)
     }
     setMobileSidebarOpen(false)
   }, [])
 
+  // If landing directly on a specific chat URL (?chat=id), fetch attached docs and server history if needed
   useEffect(() => {
-    const handlePopState = () => {
-      const p = window.location.pathname
-      const view = p.startsWith('/documents')
-        ? 'documents'
-        : p.startsWith('/knowledge')
-        ? 'knowledge'
-        : p.startsWith('/studio')
-        ? 'studio'
-        : 'chat'
-      setCurrentView(view)
+    if (chatId) {
+      fetchChatDocs(chatId)
+        .then((data) => {
+          if (data?.documents && data.documents.length > 0) {
+            setAttachedDocs(data.documents)
+            applyDoc(data.documents[0].doc_id, data.documents[0].filename)
+          }
+        })
+        .catch(() => {})
+      if (messages.length === 0) {
+        fetchChatHistory(chatId)
+          .then((data) => {
+            if (data?.history && data.history.length > 0) {
+              const serverMsgs = mapHistoryToMessages(data.history)
+              setMessages(serverMsgs)
+              saveChatMessages(chatId, serverMsgs)
+            }
+          })
+          .catch(() => {})
+      }
     }
-    window.addEventListener('popstate', handlePopState)
-    return () => window.removeEventListener('popstate', handlePopState)
   }, [])
 
   const applyDoc = useCallback((id, name) => {
@@ -333,32 +356,17 @@ export default function App() {
     setAttachedFile(null)
   }, [])
 
-  const handleNewChat = useCallback(async () => {
+  const handleNewChat = useCallback(() => {
     setInput('')
     setAttachedFile(null)
     applyDoc(null, null)
     setAttachedDocs([])
     setMessages([])
+    setChatId(null)
+    saveActiveChatId(null)
     setStructureExplorerOpen(false)
-
-    try {
-      const { chat_id } = await createChat()
-      setChatId(chat_id)
-      saveActiveChatId(chat_id)
-      setSessions(
-        upsertSession({
-          chatId: chat_id,
-          docId: null,
-          title: 'New research',
-          updatedAt: Date.now(),
-        }),
-      )
-      setMobileSidebarOpen(false)
-      handleNavigate('chat')
-    } catch (e) {
-      console.error(e)
-      toast.error('Failed to initialize research session.')
-    }
+    setMobileSidebarOpen(false)
+    handleNavigate('chat')
   }, [applyDoc, handleNavigate])
 
   const handleStop = useCallback(() => {
@@ -416,7 +424,7 @@ export default function App() {
       setInput('')
       setAttachedFile(null)
       setMobileSidebarOpen(false)
-      handleNavigate('chat')
+      handleNavigate('chat', session.chatId)
       setChatId(session.chatId)
       saveActiveChatId(session.chatId)
 
@@ -476,14 +484,74 @@ export default function App() {
     [applyDoc, handleNavigate, sessionStatuses, setSessionStatus],
   )
 
+  // Listen for browser navigation (back/forward)
+  useEffect(() => {
+    const handlePopState = () => {
+      const p = window.location.pathname
+      const view = p.startsWith('/documents')
+        ? 'documents'
+        : p.startsWith('/knowledge')
+        ? 'knowledge'
+        : p.startsWith('/studio')
+        ? 'studio'
+        : 'chat'
+      setCurrentView(view)
+
+      if (view === 'chat') {
+        const searchParams = new URLSearchParams(window.location.search)
+        const urlChatId = searchParams.get('chat')
+        if (urlChatId) {
+          const targetSession = sessionsRef.current.find((s) => s.chatId === urlChatId)
+          if (targetSession) {
+            handleSelectSession(targetSession)
+          } else {
+            handleSelectSession({ chatId: urlChatId, title: 'Research' })
+          }
+        } else {
+          // Navigated to root "/" -> Start clean new chat
+          setChatId(null)
+          setMessages([])
+          setAttachedDocs([])
+          applyDoc(null, null)
+        }
+      }
+    }
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [handleSelectSession, applyDoc])
+
+  // Global keyboard shortcut for New Research (Cmd+N / Ctrl+N)
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'n') {
+        e.preventDefault()
+        handleNewChat()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [handleNewChat])
+
   /**
    * Attach an additional document from the library to current active chat session.
    */
   const handleAttachDoc = useCallback(
     async (doc) => {
-      if (!chatId) return
+      let cid = chatId
+      if (!cid) {
+        try {
+          const { chat_id } = await createChat()
+          cid = chat_id
+          setChatId(chat_id)
+          saveActiveChatId(chat_id)
+          handleNavigate('chat', chat_id)
+        } catch (err) {
+          toast.error('Failed to create chat session')
+          return
+        }
+      }
       try {
-        await attachDocumentToChat(chatId, doc.doc_id)
+        await attachDocumentToChat(cid, doc.doc_id)
         setAttachedDocs((prev) => {
           if (prev.some((d) => d.doc_id === doc.doc_id)) return prev
           return [...prev, doc]
@@ -491,13 +559,13 @@ export default function App() {
         if (!docRef.current.id) {
           applyDoc(doc.doc_id, doc.filename)
         }
-        setSessionStatus(chatId, 'ready')
+        setSessionStatus(cid, 'ready')
         toast.success(`Attached "${doc.filename}" to session`)
       } catch (err) {
         toast.error('Failed to attach document')
       }
     },
-    [chatId, applyDoc, setSessionStatus],
+    [chatId, applyDoc, setSessionStatus, handleNavigate],
   )
 
   /**
@@ -882,6 +950,7 @@ export default function App() {
           cid = chat_id
           setChatId(chat_id)
           saveActiveChatId(chat_id)
+          window.history.replaceState(null, '', `/?chat=${encodeURIComponent(chat_id)}`)
         } catch (e) {
           console.error(e)
           toast.error('Could not start research conversation.')
@@ -1101,12 +1170,11 @@ export default function App() {
       setAttachedDocs([{ doc_id: targetDocId, filename: targetDocName, status: 'ready' }])
       setMessages([])
       setStructureExplorerOpen(false)
-      handleNavigate('chat')
-
       try {
         const { chat_id } = await createChat()
         setChatId(chat_id)
         saveActiveChatId(chat_id)
+        handleNavigate('chat', chat_id)
         setSessionStatus(chat_id, 'ready')
         attachDocumentToChat(chat_id, targetDocId).catch(() => {})
         setSessions(

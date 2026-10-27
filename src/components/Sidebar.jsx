@@ -149,7 +149,7 @@ export function Sidebar({
       <div className="flex flex-col gap-1 p-3 border-b border-[#E4E5DE]">
         <button
           type="button"
-          onClick={() => onNavigate?.('chat')}
+          onClick={() => onNavigate?.('chat', activeChatId)}
           className={`flex items-center justify-between rounded-xl px-3 py-2 text-xs font-medium transition ${
             currentView === 'chat'
               ? 'bg-[#E8F0E8] text-[#285943]'
