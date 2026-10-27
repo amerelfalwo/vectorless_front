@@ -144,6 +144,15 @@ export async function deleteDocument(documentId) {
   return data
 }
 
+/**
+ * Permanently delete all documents and their indices for the current client.
+ * @returns {Promise<{ message: string, count: number }>}
+ */
+export async function deleteAllDocuments() {
+  const { data } = await api.delete('/documents')
+  return data
+}
+
 
 /**
  * @returns {Promise<{ chat_id: string }>}

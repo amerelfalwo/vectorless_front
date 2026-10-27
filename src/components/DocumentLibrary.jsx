@@ -18,6 +18,7 @@ import {
   uploadDocument,
   retryDocumentIndexing,
   deleteDocument,
+  deleteAllDocuments,
   fetchDocumentStatus,
   fetchDocumentTree,
 } from '../api/client.js'
@@ -36,6 +37,8 @@ export function DocumentLibrary({
   const [selectedDocForTree, setSelectedDocForTree] = useState(null)
   const [docTreeData, setDocTreeData] = useState(null)
   const [deleteConfirmId, setDeleteConfirmId] = useState(null)
+  const [showDeleteAllModal, setShowDeleteAllModal] = useState(false)
+  const [isDeletingAll, setIsDeletingAll] = useState(false)
 
   const fileInputRef = useRef(null)
 
@@ -158,6 +161,26 @@ export function DocumentLibrary({
     }
   }
 
+  // Handle delete all
+  const handleDeleteAll = async () => {
+    setIsDeletingAll(true)
+    try {
+      const res = await deleteAllDocuments()
+      toast.success(res.message || 'All documents deleted successfully.')
+      setShowDeleteAllModal(false)
+      if (selectedDocForTree) {
+        setSelectedDocForTree(null)
+        setDocTreeData(null)
+      }
+      await refreshDocuments()
+    } catch (err) {
+      console.error('Failed to delete all documents:', err)
+      toast.error('Failed to delete all documents.')
+    } finally {
+      setIsDeletingAll(false)
+    }
+  }
+
   // Open tree explorer for a document
   const handleInspectTree = async (doc) => {
     setSelectedDocForTree(doc)
@@ -215,8 +238,8 @@ export function DocumentLibrary({
               </p>
             </div>
 
-            {/* Quick Upload Action */}
-            <div className="flex items-center gap-3">
+            {/* Header Actions */}
+            <div className="flex items-center gap-2.5 sm:gap-3">
               <input
                 ref={fileInputRef}
                 type="file"
@@ -228,10 +251,29 @@ export function DocumentLibrary({
                   e.target.value = ''
                 }}
               />
+
+              {/* Delete All PDFs Button */}
+              {documents.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setShowDeleteAllModal(true)}
+                  disabled={isUploading || isDeletingAll}
+                  className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50/80 px-3.5 py-2.5 text-sm font-medium text-red-600 shadow-xs transition hover:bg-red-100 hover:border-red-300 hover:text-red-700 active:scale-98 disabled:opacity-50"
+                  title="Delete all PDF documents"
+                >
+                  {isDeletingAll ? (
+                    <Loader2 className="h-4 w-4 animate-spin text-red-600" />
+                  ) : (
+                    <Trash2 className="h-4 w-4 text-red-600" />
+                  )}
+                  <span>Delete All</span>
+                </button>
+              )}
+
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                disabled={isUploading}
+                disabled={isUploading || isDeletingAll}
                 className="flex items-center gap-2 rounded-xl bg-[#285943] px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-[#1e4533] active:scale-98 disabled:opacity-50"
               >
                 {isUploading ? (
@@ -549,6 +591,58 @@ export function DocumentLibrary({
             }
           }}
         />
+      )}
+      {/* Delete All Confirmation Modal */}
+      {showDeleteAllModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-xs">
+          <div
+            role="dialog"
+            aria-modal="true"
+            className="w-full max-w-md rounded-2xl border border-[#E4E5DE] bg-white p-6 shadow-xl animate-in fade-in zoom-in-95 duration-150"
+          >
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-red-100 text-red-600">
+              <Trash2 className="h-6 w-6" />
+            </div>
+            <h2 className="mt-4 text-center font-serif text-xl font-semibold text-[#262B27]">
+              Delete All PDF Documents?
+            </h2>
+            <p className="mt-2 text-center text-sm leading-relaxed text-[#777D76]">
+              This action will permanently delete all{' '}
+              <strong className="font-semibold text-[#262B27]">
+                {documents.length} document{documents.length === 1 ? '' : 's'}
+              </strong>
+              , their hierarchical tree structures, and unbind them from any linked chat sessions. This cannot be undone.
+            </p>
+            <div className="mt-6 flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setShowDeleteAllModal(false)}
+                disabled={isDeletingAll}
+                className="flex-1 rounded-xl border border-[#E4E5DE] bg-white px-4 py-2.5 text-sm font-medium text-[#262B27] transition hover:bg-[#F7F6F1] disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleDeleteAll}
+                disabled={isDeletingAll}
+                className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-red-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-red-700 active:scale-98 disabled:opacity-50"
+              >
+                {isDeletingAll ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span>Deleting...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="h-4 w-4" />
+                    <span>Yes, Delete All</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )
