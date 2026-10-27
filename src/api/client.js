@@ -1,15 +1,45 @@
 import axios from 'axios'
 import { API_BASE_URL } from '../config.js'
 
+const CLIENT_ID_KEY = 'vectorless_rag_client_id_v1'
+
+/**
+ * Retrieves existing client UUIDv4 or generates and persists a new one.
+ * @returns {string}
+ */
+export function getClientId() {
+  let id = null
+  try {
+    id = localStorage.getItem(CLIENT_ID_KEY)
+    const uuid4Regex = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+    if (!id || !uuid4Regex.test(id)) {
+      id = typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+            const r = (Math.random() * 16) | 0
+            const v = c === 'x' ? r : (r & 0x3) | 0x8
+            return v.toString(16)
+          })
+      localStorage.setItem(CLIENT_ID_KEY, id)
+    }
+  } catch {
+    id = id || '00000000-0000-4000-8000-000000000000'
+  }
+  return id
+}
+
 /**
  * JSON endpoints use axios. Streaming `/ask` uses `fetch` (see `streamAsk`) because
  * axios does not expose ReadableStream as cleanly for incremental UI updates.
- * If the browser reports CORS errors on streaming, enable CORSMiddleware on the
- * FastAPI app (including exposed headers for SSE if needed).
  */
 export const api = axios.create({
   baseURL: API_BASE_URL,
   headers: { Accept: 'application/json' },
+})
+
+api.interceptors.request.use((config) => {
+  config.headers['X-Client-ID'] = getClientId()
+  return config
 })
 
 /**
@@ -281,7 +311,11 @@ export async function streamAsk({
 }) {
   const res = await fetch(`${API_BASE_URL}/ask`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'text/event-stream',
+      'X-Client-ID': getClientId(),
+    },
     body: JSON.stringify({ doc_id, doc_ids, doc_name, chat_id, query, deep_analysis }),
     signal,
   })
